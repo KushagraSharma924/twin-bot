@@ -1,89 +1,26 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-@layer base {
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
   :root {
-    /* ChatGPT color palette */
-    --background: 0 0% 100%;
-    --foreground: 220 3% 15%;
-    
-    --card: 0 0% 100%;
-    --card-foreground: 220 3% 15%;
-    
-    --popover: 0 0% 100%;
-    --popover-foreground: 220 3% 15%;
-    
-    --primary: 160 84% 39%;  /* ChatGPT green: #10a37f */
-    --primary-foreground: 0 0% 100%;
-    
-    --secondary: 210 5% 98%;  /* Light gray: #f7f7f8 */
-    --secondary-foreground: 220 3% 15%;
-    
-    --muted: 210 5% 98%; 
-    --muted-foreground: 220 3% 45%;
-    
-    --accent: 240 6% 97%;  /* ChatGPT sidebar hover: #ececf1 */
-    --accent-foreground: 220 3% 15%;
-    
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 100%;
-    
-    --border: 220 13% 91%;  /* Light border color: #e5e5e5 */
-    --input: 220 13% 91%;
-    --ring: 160 84% 39%;  /* Same as primary */
-    
-    --radius: 0.5rem;
-  }
-  
-  .dark {
-    --background: 220 3% 13%;  /* ChatGPT dark mode: #202123 */
-    --foreground: 0 0% 100%;
-    
-    --card: 220 3% 18%;
-    --card-foreground: 0 0% 100%;
-    
-    --popover: 220 3% 18%;
-    --popover-foreground: 0 0% 100%;
-    
-    --primary: 160 84% 39%;  /* ChatGPT green: #10a37f */
-    --primary-foreground: 0 0% 100%;
-    
-    --secondary: 220 3% 26%;  /* Dark mode secondary: #343541 */
-    --secondary-foreground: 0 0% 100%;
-    
-    --muted: 220 3% 26%;
-    --muted-foreground: 220 3% 80%;
-    
-    --accent: 220 3% 30%;
-    --accent-foreground: 0 0% 100%;
-    
-    --destructive: 0 62% 45%;
-    --destructive-foreground: 0 0% 100%;
-    
-    --border: 220 3% 30%;
-    --input: 220 3% 30%;
-    --ring: 160 84% 39%;
+    --background: #0a0a0a;
+    --foreground: #ededed;
   }
 }
 
-@layer base {
-  * {
-    @apply border-border;
-  }
-  
-  body {
-    @apply bg-background text-foreground antialiased;
-  }
-}
-
-/* ChatGPT-style focused inputs */
-@layer components {
-  .input-focus {
-    @apply focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none;
-  }
-  
-  .btn-primary {
-    @apply bg-primary text-primary-foreground hover:bg-primary/90 transition-colors;
-  }
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
 }
