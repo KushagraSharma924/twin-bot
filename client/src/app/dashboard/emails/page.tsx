@@ -7,17 +7,12 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import Sidebar from "@/components/sidebar"
 import {
   Bell,
-  Calendar,
   ChevronDown,
-  FileText,
-  Home,
-  Mail,
   Menu,
-  MessageSquare,
   Search,
-  Settings,
   Star,
   Archive,
   Trash2,
@@ -26,7 +21,7 @@ import {
   Tag,
   ChevronRight,
   Plus,
-  Zap,
+  Mail,
 } from "lucide-react"
 
 export default function EmailsPage() {
@@ -35,62 +30,7 @@ export default function EmailsPage() {
   return (
     <div className="flex h-screen bg-[#202123]">
       {/* Sidebar */}
-      <div className={`${isSidebarOpen ? "w-64" : "w-20"} bg-[#202123] border-r border-gray-700 transition-all duration-300 flex flex-col`}>
-        <div className="p-4 border-b border-gray-700 flex items-center justify-between">
-          <div className={`flex items-center space-x-2 ${!isSidebarOpen && "justify-center w-full"}`}>
-            <Zap className="h-6 w-6 text-[#10a37f]" />
-            {isSidebarOpen && <span className="font-bold text-white">TwinBot</span>}
-          </div>
-          <button
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className={`text-gray-400 hover:text-white hover:bg-[#343541] p-2 rounded-md ${!isSidebarOpen ? "hidden" : ""}`}
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="flex-1 py-4">
-          <nav className="space-y-1 px-2">
-            <Link href="/dashboard" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <Home className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Dashboard</span>}
-            </Link>
-            <Link href="/dashboard/twinbot" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <MessageSquare className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>TwinBot Chat</span>}
-            </Link>
-            <Link href="/dashboard/emails" className="flex items-center w-full p-2 text-white bg-[#343541] hover:bg-[#444654] rounded-md">
-              <Mail className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Emails</span>}
-            </Link>
-            <Link href="/dashboard/calendar" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <Calendar className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Calendar</span>}
-            </Link>
-            <Link href="/dashboard/research" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <FileText className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Research</span>}
-            </Link>
-            <Link href="#" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <Settings className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Settings</span>}
-            </Link>
-          </nav>
-        </div>
-        <div className="p-4 border-t border-gray-700">
-          <div className={`flex ${isSidebarOpen ? "items-center" : "justify-center"}`}>
-            <Avatar className="h-8 w-8">
-              <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
-              <AvatarFallback className="bg-[#343541] text-white">JD</AvatarFallback>
-            </Avatar>
-            {isSidebarOpen && (
-              <div className="ml-2 flex-1">
-                <p className="text-sm font-medium text-white">John Doe</p>
-                <p className="text-xs text-gray-400">john@example.com</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <Sidebar activePage="emails" />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-[#343541]">
@@ -248,83 +188,24 @@ export default function EmailsPage() {
                         </p>
                         {i === 1 && (
                           <div className="mt-2 flex gap-2">
-                            <Badge className="bg-[#10a37f]/20 text-[#10a37f] border-[#10a37f]/30">AI-Draft Available</Badge>
-                            <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">High Priority</Badge>
+                            <Badge className="bg-[#10a37f]/20 text-[#10a37f]">AI-suggested reply</Badge>
+                            <Badge className="bg-orange-500/20 text-orange-500">Urgent</Badge>
                           </div>
                         )}
+                      </div>
+                      <div className="ml-2 flex flex-col items-center gap-2">
+                        <button className="text-gray-400 hover:text-yellow-400">
+                          <Star className="h-4 w-4" />
+                        </button>
+                        <button className="text-gray-400 hover:text-[#10a37f]">
+                          <Archive className="h-4 w-4" />
+                        </button>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
             </ScrollArea>
-
-            {/* Selected Email Preview - Optional */}
-            <div className="hidden md:block h-1/2 border-t border-gray-700 bg-[#444654] p-6 overflow-auto">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center">
-                  <Avatar className="h-10 w-10 mr-3">
-                    <AvatarImage src="/placeholder.svg?height=40&width=40&text=1" alt="Sender" />
-                    <AvatarFallback className="bg-[#10a37f]/20 text-[#10a37f]">S1</AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <h3 className="text-white font-medium">Project Update</h3>
-                    <p className="text-sm text-gray-400">from: sarah@example.com</p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs text-gray-400">Just now</span>
-                  <button className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-[#343541]">
-                    <Archive className="h-4 w-4" />
-                  </button>
-                  <button className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-[#343541]">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-              <div className="text-white space-y-4">
-                <p className="text-lg font-medium">Team Collaboration</p>
-                <div className="text-gray-300 space-y-3">
-                  <p>Hi John,</p>
-                  <p>I wanted to share the latest updates on our project. We have completed the initial phase and I'm excited to show you the results.</p>
-                  <p>Here are the key highlights:</p>
-                  <ul className="list-disc pl-5 space-y-1">
-                    <li>Frontend development completed ahead of schedule</li>
-                    <li>API integration with the backend services</li>
-                    <li>Initial user testing feedback incorporated</li>
-                  </ul>
-                  <p>Let's schedule a meeting to discuss the next steps. I've suggested some times below, or you can let TwinBot suggest a time that works for both of us.</p>
-                  <p>Best regards,<br />Sarah</p>
-                </div>
-                <div className="mt-6 pt-4 border-t border-gray-700">
-                  <p className="text-sm text-[#10a37f] mb-2 font-medium">TwinBot suggests:</p>
-                  <div className="bg-[#10a37f]/10 rounded-md p-3 border border-[#10a37f]/20">
-                    <p className="text-gray-300 mb-2">Based on your calendar, you could meet with Sarah on:</p>
-                    <div className="space-y-2">
-                      <button className="w-full text-left p-2 bg-[#10a37f]/20 hover:bg-[#10a37f]/30 text-white rounded">Tomorrow at 10:00 AM</button>
-                      <button className="w-full text-left p-2 bg-[#10a37f]/20 hover:bg-[#10a37f]/30 text-white rounded">Wednesday at 2:30 PM</button>
-                    </div>
-                    <div className="flex justify-end mt-2">
-                      <button className="text-[#10a37f] hover:text-white hover:bg-[#10a37f] text-sm px-3 py-1 rounded">
-                        Let TwinBot schedule
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="pt-4">
-                  <div className="flex">
-                    <Input 
-                      placeholder="Reply to this email..." 
-                      className="bg-[#343541] border-gray-700 text-white placeholder:text-gray-500 focus:border-[#10a37f] focus:ring-[#10a37f]"
-                    />
-                    <button className="ml-2 bg-[#10a37f] text-white px-4 rounded-md hover:bg-[#0e8f6f] flex items-center">
-                      <Send className="h-4 w-4 mr-1" />
-                      <span>Send</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>

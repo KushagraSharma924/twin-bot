@@ -6,17 +6,12 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import Sidebar from "@/components/sidebar"
 import {
   Bell,
-  Calendar,
   ChevronDown,
-  FileText,
-  Home,
-  Mail,
   Menu,
-  MessageSquare,
   Search,
-  Settings,
   Plus,
   ChevronLeft,
   ChevronRight,
@@ -24,7 +19,6 @@ import {
   Users,
   Video,
   MapPin,
-  Zap,
 } from "lucide-react"
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -176,62 +170,7 @@ export default function CalendarPage() {
   return (
     <div className="flex h-screen bg-[#202123]">
       {/* Sidebar */}
-      <div className={`${isSidebarOpen ? "w-64" : "w-20"} bg-[#202123] border-r border-gray-700 transition-all duration-300 flex flex-col`}>
-        <div className="p-4 border-b border-gray-700 flex items-center justify-between">
-          <div className={`flex items-center space-x-2 ${!isSidebarOpen && "justify-center w-full"}`}>
-            <Zap className="h-6 w-6 text-[#10a37f]" />
-            {isSidebarOpen && <span className="font-bold text-white">TwinBot</span>}
-          </div>
-          <button
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className={`text-gray-400 hover:text-white hover:bg-[#343541] p-2 rounded-md ${!isSidebarOpen ? "hidden" : ""}`}
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="flex-1 py-4">
-          <nav className="space-y-1 px-2">
-            <Link href="/dashboard" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <Home className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Dashboard</span>}
-            </Link>
-            <Link href="/dashboard/twinbot" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <MessageSquare className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>TwinBot Chat</span>}
-            </Link>
-            <Link href="/dashboard/emails" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <Mail className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Emails</span>}
-            </Link>
-            <Link href="/dashboard/calendar" className="flex items-center w-full p-2 text-white bg-[#343541] hover:bg-[#444654] rounded-md">
-              <Calendar className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Calendar</span>}
-            </Link>
-            <Link href="/dashboard/research" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <FileText className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Research</span>}
-            </Link>
-            <Link href="#" className="flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md">
-              <Settings className="h-5 w-5 mr-2" />
-              {isSidebarOpen && <span>Settings</span>}
-            </Link>
-          </nav>
-        </div>
-        <div className="p-4 border-t border-gray-700">
-          <div className={`flex ${isSidebarOpen ? "items-center" : "justify-center"}`}>
-            <Avatar className="h-8 w-8">
-              <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
-              <AvatarFallback className="bg-[#343541] text-white">JD</AvatarFallback>
-            </Avatar>
-            {isSidebarOpen && (
-              <div className="ml-2 flex-1">
-                <p className="text-sm font-medium text-white">John Doe</p>
-                <p className="text-xs text-gray-400">john@example.com</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <Sidebar activePage="calendar" />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-[#343541]">
@@ -248,32 +187,37 @@ export default function CalendarPage() {
             <div className="ml-6 flex items-center space-x-2">
               <button 
                 onClick={goToPreviousMonth}
-                className="p-1 rounded-full text-gray-400 hover:text-white hover:bg-[#444654]"
+                className="text-gray-300 hover:text-white p-1 rounded-md hover:bg-[#444654]"
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
-              <h2 className="text-lg font-medium text-white">
-                {MONTHS[currentMonth]} {currentYear}
-              </h2>
+              <span className="text-white font-medium">{MONTHS[currentMonth]} {currentYear}</span>
               <button 
                 onClick={goToNextMonth}
-                className="p-1 rounded-full text-gray-400 hover:text-white hover:bg-[#444654]"
+                className="text-gray-300 hover:text-white p-1 rounded-md hover:bg-[#444654]"
               >
                 <ChevronRight className="h-5 w-5" />
               </button>
-              <button className="ml-4 px-3 py-1 bg-[#10a37f] text-white rounded-md text-sm hover:bg-[#0e8f6f] flex items-center">
+            </div>
+            <div className="ml-4">
+              <button className="bg-[#10a37f] text-white px-3 py-1.5 rounded-md hover:bg-[#0e8f6f] flex items-center">
                 <Plus className="h-4 w-4 mr-1" />
-                New Event
+                <span>New Event</span>
               </button>
             </div>
           </div>
-          <div className="flex items-center space-x-4">
-            <div className="relative">
-              <button className="relative text-gray-300 hover:text-white hover:bg-[#444654] p-2 rounded-md">
-                <Bell className="h-5 w-5" />
-                <span className="absolute top-1 right-1 h-2 w-2 bg-[#10a37f] rounded-full"></span>
-              </button>
-            </div>
+          <div className="ml-4 relative">
+            <Input 
+              placeholder="Search events..." 
+              className="w-40 md:w-52 bg-[#40414f] border-gray-700 text-white placeholder:text-gray-500 focus:border-[#10a37f] focus:ring-[#10a37f]"
+            />
+            <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-500" />
+          </div>
+          <div className="flex items-center space-x-4 ml-4">
+            <button className="relative text-gray-300 hover:text-white hover:bg-[#444654] p-2 rounded-md">
+              <Bell className="h-5 w-5" />
+              <span className="absolute top-1 right-1 h-2 w-2 bg-[#10a37f] rounded-full"></span>
+            </button>
             <div className="flex items-center">
               <Avatar className="h-8 w-8">
                 <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
@@ -286,92 +230,101 @@ export default function CalendarPage() {
 
         {/* Content */}
         <div className="flex-1 flex overflow-hidden">
-          {/* Calendar View */}
-          <div className="flex-1 overflow-auto p-4">
-            {/* Month View */}
-            <div className="grid grid-cols-7 text-center mb-2">
-              {DAYS.map((day) => (
-                <div key={day} className="text-gray-400 font-medium py-2">
+          {/* Calendar with Events */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Day Labels */}
+            <div className="grid grid-cols-7 bg-[#343541]">
+              {DAYS.map(day => (
+                <div key={day} className="py-2 text-center text-sm font-medium text-gray-400">
                   {day}
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-7 gap-1">
-              {renderCalendarDays()}
-            </div>
-          </div>
-
-          {/* Upcoming Events Sidebar */}
-          <div className="hidden md:flex w-80 border-l border-gray-700 bg-[#202123] flex-col">
-            <div className="p-4 border-b border-gray-700">
-              <h3 className="font-bold text-white mb-2">Upcoming Events</h3>
-              <p className="text-sm text-gray-400">
-                {MONTHS[todayMonth]} {todayDate}, {todayYear}
-              </p>
-            </div>
+            
+            {/* Calendar Grid */}
             <ScrollArea className="flex-1">
-              <div className="p-4 space-y-4">
-                {events.sort((a, b) => a.day - b.day).map((event) => (
-                  <div 
-                    key={event.id} 
-                    className="p-3 bg-[#343541] border border-gray-700 rounded-lg hover:bg-[#444654] cursor-pointer"
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <h4 className="font-medium text-white">{event.title}</h4>
-                        <p className="text-sm text-gray-400 flex items-center mt-1">
-                          <Clock className="h-3.5 w-3.5 mr-1.5" />
-                          {event.startTime} - {event.endTime}
-                        </p>
-                      </div>
-                      <Badge className={`${event.color} text-white`}>
-                        {event.day === todayDate ? 'Today' : 
-                         event.day === todayDate + 1 ? 'Tomorrow' : 
-                         `In ${event.day - todayDate} days`}
-                      </Badge>
-                    </div>
-                    
-                    <div className="flex items-center text-sm text-gray-400 mt-2">
-                      <Users className="h-3.5 w-3.5 mr-1.5" />
-                      <p className="truncate">{event.participants.join(', ')}</p>
-                    </div>
-                    
-                    {event.location && (
-                      <div className="flex items-center text-sm text-gray-400 mt-1.5">
-                        <MapPin className="h-3.5 w-3.5 mr-1.5" />
-                        <p>{event.location}</p>
-                      </div>
-                    )}
-                    
-                    {event.isOnline && (
-                      <div className="flex items-center text-sm text-gray-400 mt-1.5">
-                        <Video className="h-3.5 w-3.5 mr-1.5" />
-                        <p>Virtual Meeting</p>
-                      </div>
-                    )}
-                    
-                    <div className="mt-3 pt-3 border-t border-gray-700">
-                      <p className="text-xs text-[#10a37f]">TwinBot: Prepare briefing notes 30 minutes before</p>
-                    </div>
-                  </div>
-                ))}
+              <div className="grid grid-cols-7 auto-rows-min">
+                {renderCalendarDays()}
               </div>
             </ScrollArea>
-            
-            <div className="p-4 border-t border-gray-700">
-              <div className="bg-[#10a37f]/10 rounded-md p-3 border border-[#10a37f]/20">
-                <p className="text-sm text-[#10a37f] font-medium mb-2">TwinBot Suggestions</p>
-                <p className="text-xs text-gray-300 mb-2">Based on your workload, here are scheduling suggestions:</p>
-                <div className="space-y-1">
-                  <button className="w-full text-left p-2 bg-[#10a37f]/20 hover:bg-[#10a37f]/30 text-white text-sm rounded">
-                    Reschedule Project Review to Thursday
-                  </button>
-                  <button className="w-full text-left p-2 bg-[#10a37f]/20 hover:bg-[#10a37f]/30 text-white text-sm rounded">
-                    Block focus time tomorrow 2-4 PM
-                  </button>
-                </div>
+          </div>
+          
+          {/* Event Details Sidebar */}
+          <div className="hidden md:block w-80 border-l border-gray-700 bg-[#202123] p-4 overflow-hidden flex-col">
+            <h2 className="text-lg font-bold text-white mb-4">Today's Events</h2>
+            <ScrollArea className="flex-1">
+              <div className="space-y-4">
+                {events
+                  .filter(event => event.day === todayDate)
+                  .map(event => (
+                    <div 
+                      key={event.id} 
+                      className="p-3 rounded-md bg-[#343541] border border-gray-700 hover:bg-[#444654] transition-colors"
+                    >
+                      <div className="flex items-start">
+                        <div className={`${event.color} w-1 h-full self-stretch rounded-full mr-3`}></div>
+                        <div className="flex-1">
+                          <h3 className="text-white font-medium">{event.title}</h3>
+                          <p className="text-gray-400 text-sm flex items-center mt-1">
+                            <Clock className="h-3.5 w-3.5 mr-1" /> 
+                            {event.startTime} - {event.endTime}
+                          </p>
+                          {event.location && (
+                            <p className="text-gray-400 text-sm flex items-center mt-1">
+                              <MapPin className="h-3.5 w-3.5 mr-1" /> 
+                              {event.location}
+                            </p>
+                          )}
+                          {event.isOnline && (
+                            <p className="text-gray-400 text-sm flex items-center mt-1">
+                              <Video className="h-3.5 w-3.5 mr-1" /> 
+                              Online Meeting
+                            </p>
+                          )}
+                          <div className="mt-2">
+                            <p className="text-gray-400 text-sm flex items-center">
+                              <Users className="h-3.5 w-3.5 mr-1" /> 
+                              {event.participants.length} participants
+                            </p>
+                          </div>
+                          <div className="mt-3 flex space-x-2">
+                            <button className="text-xs bg-[#343541] text-white px-2 py-1 rounded hover:bg-[#444654]">
+                              Edit
+                            </button>
+                            <button className="text-xs bg-[#343541] text-white px-2 py-1 rounded hover:bg-[#444654]">
+                              Join
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
               </div>
-            </div>
+              
+              {/* Upcoming Events Section */}
+              <h2 className="text-lg font-bold text-white mt-6 mb-4">Upcoming Events</h2>
+              <div className="space-y-4">
+                {events
+                  .filter(event => event.day > todayDate)
+                  .slice(0, 3)
+                  .map(event => (
+                    <div 
+                      key={event.id} 
+                      className="p-3 rounded-md bg-[#343541] border border-gray-700 hover:bg-[#444654] transition-colors"
+                    >
+                      <div className="flex items-start">
+                        <div className={`${event.color} w-1 h-full self-stretch rounded-full mr-3`}></div>
+                        <div>
+                          <h3 className="text-white font-medium">{event.title}</h3>
+                          <p className="text-gray-400 text-sm mt-1">
+                            Day {event.day}, {event.startTime}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </ScrollArea>
           </div>
         </div>
       </div>
