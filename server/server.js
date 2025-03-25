@@ -3,7 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import { google } from 'googleapis';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import * as auth from './auth.js';
+import * as aiApi from './ai-api.js';
 
 // Load environment variables
 dotenv.config();
@@ -15,53 +16,19 @@ const PORT = process.env.PORT || 5002;
 app.use(cors());
 app.use(express.json());
 
-// Authentication middleware that properly respects email verification
-const authMiddleware = async (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-    
-    const token = authHeader.split(' ')[1];
-    const { data, error } = await supabase.auth.getUser(token);
-    
-    if (error) {
-      console.error('Auth middleware error:', error.message);
-      return res.status(401).json({ error: "Invalid or expired token" });
-    }
-    
-    // Check if email is verified
-    if (data.user && !data.user.email_confirmed_at) {
-      return res.status(403).json({ 
-        error: "Email not verified", 
-        message: "Please verify your email before accessing this resource"
-      });
-    }
-    
-    // Set the authenticated user on the request object
-    req.user = data.user;
-    next();
-  } catch (error) {
-    console.error('Auth middleware exception:', error.message);
-    res.status(500).json({ error: "Authentication error" });
-  }
-};
-
 // Apply auth middleware to all protected routes
-app.use('/api/twin', authMiddleware);
-app.use('/api/calendar', authMiddleware);
-app.use('/api/browser', authMiddleware);
-app.use('/api/user', authMiddleware);
+app.use('/api/twin', auth.authMiddleware);
+app.use('/api/calendar', auth.authMiddleware);
+app.use('/api/browser', auth.authMiddleware);
+app.use('/api/user', auth.authMiddleware);
+
+// Admin routes with stricter authorization
+app.use('/api/admin', auth.adminMiddleware);
 
 // Supabase client initialization
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
-
-// Google Gemini initialization
-const geminiApiKey = process.env.GOOGLE_GEMINI_API_KEY;
-const genAI = new GoogleGenerativeAI(geminiApiKey);
 
 // Initialize Google OAuth2 client with proper credentials
 const oauth2Client = new google.auth.OAuth2(
@@ -172,63 +139,17 @@ async function processNLPTaskStreaming(content, callback, task = 'general') {
 
 // ===== API ROUTES =====
 
-// User authentication
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password
-    });
+// Authentication routes
+app.post('/api/auth/login', auth.login);
+app.post('/api/auth/register', auth.register);
+app.post('/api/auth/resend-verification', auth.resendVerification);
+app.post('/api/auth/verification-status', auth.checkVerificationStatus);
+app.post('/api/auth/reset-password', auth.resetPassword);
+app.post('/api/auth/update-password', auth.updatePassword);
 
-    if (error) throw error;
-    
-    // Check if email is verified
-    if (data.user && !data.user.email_confirmed_at) {
-      return res.status(403).json({ 
-        error: "Email not verified", 
-        message: "Please check your email and verify your account before logging in.",
-        user: { id: data.user.id, email: data.user.email }
-      });
-    }
-    
-    res.json(data);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { email, password, name } = req.body;
-    
-    // Create the user in Supabase Auth
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { name }, // Store name in the user metadata
-        emailRedirectTo: `${process.env.SITE_URL || 'http://localhost:3000'}/auth/callback`
-      }
-    });
-
-    if (error) throw error;
-    
-    console.log("User registration successful");
-    
-    // NOTE: Profile creation is now handled by a database trigger
-    // When a user is created in auth.users, it automatically creates
-    // a corresponding record in the profiles table
-    
-    res.json({
-      user: data.user,
-      message: "Registration successful! Please check your email to confirm your account."
-    });
-  } catch (error) {
-    console.error("Registration error:", error);
-    res.status(400).json({ error: error.message });
-  }
-});
+// User profile routes
+app.get('/api/user/profile', auth.getProfile);
+app.post('/api/user/create-profile', auth.createProfile);
 
 // Digital Twin API
 app.post('/api/twin/chat', async (req, res) => {
@@ -255,7 +176,7 @@ app.post('/api/twin/chat', async (req, res) => {
     if (conversationError) throw conversationError;
     
     // Process message with Gemini NLP
-    const response = await processNLPTask(message);
+    const response = await aiApi.processNLPTask(message);
     
     // Store the AI response
     const { error: responseError } = await supabase
@@ -281,7 +202,7 @@ app.post('/api/twin/extract-tasks', async (req, res) => {
     const { content, userId } = req.body;
     
     // Extract tasks using NLP
-    const tasksJson = await processNLPTask(content, 'task_extraction');
+    const tasksJson = await aiApi.processNLPTask(content, 'task_extraction');
     
     // Parse JSON with error handling
     let tasks;
@@ -396,7 +317,7 @@ app.post('/api/calendar/create-event', async (req, res) => {
     // If we need to extract the event details from text
     if (content && !eventDetails) {
       try {
-        const eventJson = await processNLPTask(content, 'calendar_event');
+        const eventJson = await aiApi.processNLPTask(content, 'calendar_event');
         
         // Parse JSON with error handling
         try {
@@ -637,246 +558,6 @@ app.post('/api/twin/learn', async (req, res) => {
     res.json({ status: 'success' });
   } catch (error) {
     res.status(400).json({ error: error.message });
-  }
-});
-
-// Resend verification email
-app.post('/api/auth/resend-verification', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    if (!email) {
-      return res.status(400).json({ error: "Email is required" });
-    }
-    
-    const { data, error } = await supabase.auth.resend({
-      type: 'signup',
-      email,
-      options: {
-        emailRedirectTo: `${process.env.SITE_URL || 'http://localhost:3000'}/auth/callback`
-      }
-    });
-    
-    if (error) throw error;
-    
-    res.json({
-      message: "Verification email has been resent. Please check your inbox.",
-      data
-    });
-  } catch (error) {
-    console.error("Error resending verification email:", error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// Check verification status
-app.post('/api/auth/verification-status', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    if (!email) {
-      return res.status(400).json({ error: "Email is required" });
-    }
-    
-    // We can't directly check verification status without being logged in,
-    // so we'll attempt a "refresh" which will fail with a specific error if not verified
-    const { data, error } = await supabase.auth.getUser();
-    
-    if (error) {
-      return res.json({ 
-        verified: false,
-        message: "Unable to determine verification status. User may not be logged in."
-      });
-    }
-    
-    const isVerified = data.user && data.user.email === email && data.user.email_confirmed_at;
-    
-    res.json({
-      verified: Boolean(isVerified),
-      user: isVerified ? {
-        id: data.user.id,
-        email: data.user.email,
-        verified_at: data.user.email_confirmed_at
-      } : null,
-      message: isVerified 
-        ? "Email is verified."
-        : "Email is not verified. Please check your inbox and verify your email."
-    });
-  } catch (error) {
-    console.error("Error checking verification status:", error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// Reset password endpoint
-app.post('/api/auth/reset-password', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    if (!email) {
-      return res.status(400).json({ error: "Email is required" });
-    }
-    
-    const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${process.env.SITE_URL || 'http://localhost:3000'}/reset-password`
-    });
-    
-    if (error) throw error;
-    
-    res.json({
-      message: "Password reset email has been sent. Please check your inbox.",
-      note: "When you click the reset link, you'll be redirected to a URL containing '#access_token=YOUR_TOKEN'. Extract this token (without the '#access_token=' prefix) and pass it to /api/auth/update-password along with your new password.",
-      data
-    });
-  } catch (error) {
-    console.error("Error sending password reset email:", error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// Update password after reset
-app.post('/api/auth/update-password', async (req, res) => {
-  try {
-    const { password, accessToken } = req.body;
-    
-    if (!password) {
-      return res.status(400).json({ error: "New password is required" });
-    }
-    
-    if (!accessToken) {
-      return res.status(400).json({ error: "Access token is required. This should be obtained from the reset password URL." });
-    }
-
-    // First, set the session using the access token
-    const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: accessToken // For password reset, access_token serves as both
-    });
-
-    if (sessionError) {
-      console.error("Session error:", sessionError);
-      throw sessionError;
-    }
-
-    // Now update the password using the established session
-    const { data, error } = await supabase.auth.updateUser({
-      password: password
-    });
-    
-    if (error) throw error;
-    
-    res.json({
-      message: "Password has been updated successfully.",
-      user: data.user
-    });
-  } catch (error) {
-    console.error("Error updating password:", error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// Profile check and creation endpoint
-app.get('/api/user/profile', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-    
-    const token = authHeader.split(' ')[1];
-    const { data: userData, error: userError } = await supabase.auth.getUser(token);
-    
-    if (userError) {
-      console.error('Auth error:', userError.message);
-      return res.status(401).json({ error: "Invalid or expired token" });
-    }
-
-    const user = userData.user;
-    
-    // Check if profile exists
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-    
-    if (profileError) {
-      // Profile doesn't exist, create it
-      const { error: createError } = await supabase
-        .from('profiles')
-        .insert([{
-          id: user.id,
-          email: user.email,
-          name: user.user_metadata?.name || user.email.split('@')[0],
-          created_at: new Date(),
-          updated_at: new Date()
-        }]);
-      
-      if (createError) {
-        console.error('Error creating profile:', createError);
-        return res.status(500).json({ error: "Failed to create profile" });
-      }
-      
-      return res.json({
-        message: "Profile created successfully",
-        profile: {
-          id: user.id,
-          email: user.email,
-          name: user.user_metadata?.name || user.email.split('@')[0]
-        }
-      });
-    }
-    
-    res.json({ profile });
-  } catch (error) {
-    console.error('Profile check error:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Direct profile creation endpoint
-app.post('/api/user/create-profile', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-    
-    const token = authHeader.split(' ')[1];
-    const { data: userData, error: userError } = await supabase.auth.getUser(token);
-    
-    if (userError) {
-      console.error('Auth error:', userError.message);
-      return res.status(401).json({ error: "Invalid or expired token" });
-    }
-
-    const user = userData.user;
-    
-    // Create profile directly
-    const { data: profile, error: createError } = await supabase
-      .from('profiles')
-      .insert([{
-        id: user.id,
-        email: user.email,
-        name: user.user_metadata?.name || 'Test User',
-        created_at: new Date(),
-        updated_at: new Date()
-      }])
-      .select()
-      .single();
-    
-    if (createError) {
-      console.error('Error creating profile:', createError);
-      return res.status(500).json({ error: "Failed to create profile", details: createError.message });
-    }
-    
-    res.json({
-      message: "Profile created successfully",
-      profile: profile
-    });
-  } catch (error) {
-    console.error('Profile creation error:', error);
-    res.status(500).json({ error: "Internal server error", details: error.message });
   }
 });
 

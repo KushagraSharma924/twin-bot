@@ -1,8 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { getUser, logout } from "@/lib/api"
 import {
   Home,
   Mail,
@@ -10,7 +12,8 @@ import {
   FileText,
   MessageSquare,
   Menu,
-  Bot
+  Bot,
+  LogOut
 } from "lucide-react"
 
 interface SidebarProps {
@@ -18,7 +21,28 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activePage }: SidebarProps) {
+  const router = useRouter()
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [user, setUser] = useState<{ id: string; email: string; name?: string } | null>(null)
+
+  useEffect(() => {
+    const currentUser = getUser()
+    if (!currentUser) {
+      router.push('/login')
+    } else {
+      setUser(currentUser)
+    }
+  }, [router])
+
+  const handleLogout = () => {
+    logout()
+    router.push('/login')
+  }
+
+  const getUserInitials = () => {
+    if (!user?.name) return 'U'
+    return user.name.split(' ').map(part => part[0]).join('')
+  }
 
   return (
     <div className={`${isSidebarOpen ? "w-64" : "w-20"} bg-[#202123] border-r border-gray-700 transition-all duration-300 flex flex-col`}>
@@ -77,15 +101,26 @@ export default function Sidebar({ activePage }: SidebarProps) {
         <div className={`flex ${isSidebarOpen ? "items-center" : "justify-center"}`}>
           <Avatar className="h-8 w-8">
             <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
-            <AvatarFallback className="bg-[#343541] text-white">JD</AvatarFallback>
+            <AvatarFallback className="bg-[#343541] text-white">
+              {getUserInitials()}
+            </AvatarFallback>
           </Avatar>
           {isSidebarOpen && (
             <div className="ml-2 flex-1">
-              <p className="text-sm font-medium text-white">John Doe</p>
-              <p className="text-xs text-gray-400">john@example.com</p>
+              <p className="text-sm font-medium text-white">{user?.name || 'User'}</p>
+              <p className="text-xs text-gray-400">{user?.email || ''}</p>
             </div>
           )}
         </div>
+        {isSidebarOpen && (
+          <button 
+            onClick={handleLogout}
+            className="mt-4 flex items-center w-full p-2 text-gray-300 hover:text-white hover:bg-[#343541] rounded-md"
+          >
+            <LogOut className="h-5 w-5 mr-2" />
+            <span>Logout</span>
+          </button>
+        )}
       </div>
     </div>
   )

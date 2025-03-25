@@ -1,13 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import Sidebar from "@/components/sidebar"
+import { getUser, logout } from "@/lib/api"
+import { toast } from "sonner"
 import {
   Bell,
   Calendar,
@@ -18,12 +21,57 @@ import {
   MessageSquare,
   Search,
   Brain,
-  Bot
+  Bot,
+  User,
+  Settings,
+  LogOut
 } from "lucide-react"
 
 export default function DashboardPage() {
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState("emails")
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [isProfileOpen, setIsProfileOpen] = useState(false)
+  const [user, setUser] = useState<{ id: string; email: string; name?: string } | null>(null)
+  const profileRef = useRef<HTMLDivElement>(null)
+  
+  useEffect(() => {
+    const currentUser = getUser()
+    if (!currentUser) {
+      router.push('/login')
+    } else {
+      setUser(currentUser)
+    }
+    
+    // Close dropdown when clicking outside
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+        setIsProfileOpen(false)
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [router])
+
+  const handleLogout = () => {
+    logout()
+    toast.success("Logged out successfully")
+    router.push('/login')
+  }
+
+  const getUserInitials = () => {
+    if (!user?.name) return 'U'
+    return user.name.split(' ').map(part => part[0]).join('')
+  }
+
+  const getFirstName = () => {
+    if (!user?.name) return 'User'
+    // Split by space and get the first part (first name)
+    return user.name.split(' ')[0]
+  }
 
   return (
     <div className="flex h-screen bg-[#202123]">
@@ -54,12 +102,47 @@ export default function DashboardPage() {
             <Link href="/dashboard/twinbot" className="text-gray-300 hover:text-white hover:bg-[#444654] p-2 rounded-md block">
               <MessageSquare className="h-5 w-5" />
             </Link>
-            <div className="flex items-center">
-              <Avatar className="h-8 w-8">
-                <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
-                <AvatarFallback className="bg-[#444654] text-white">JD</AvatarFallback>
-              </Avatar>
-              <ChevronDown className="h-4 w-4 ml-1 text-gray-400" />
+            <div className="relative" ref={profileRef}>
+              <button 
+                onClick={() => setIsProfileOpen(!isProfileOpen)}
+                className="flex items-center hover:bg-[#444654] p-1 rounded-md transition-colors"
+              >
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
+                  <AvatarFallback className="bg-[#444654] text-white">{getUserInitials()}</AvatarFallback>
+                </Avatar>
+                <ChevronDown className={`h-4 w-4 ml-1 text-gray-400 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {isProfileOpen && (
+                <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-[#2c2c2c] ring-1 ring-black ring-opacity-5 z-50">
+                  <div className="px-4 py-2 border-b border-gray-700">
+                    <p className="text-sm font-medium text-white">{user?.name || 'User'}</p>
+                    <p className="text-xs text-gray-400">{user?.email || ''}</p>
+                  </div>
+                  <Link 
+                    href="/dashboard/profile" 
+                    className="block px-4 py-2 text-sm text-gray-300 hover:bg-[#444654] hover:text-white flex items-center"
+                  >
+                    <User className="h-4 w-4 mr-2" />
+                    Profile
+                  </Link>
+                  <Link 
+                    href="/dashboard/settings" 
+                    className="block px-4 py-2 text-sm text-gray-300 hover:bg-[#444654] hover:text-white flex items-center"
+                  >
+                    <Settings className="h-4 w-4 mr-2" />
+                    Settings
+                  </Link>
+                  <button 
+                    onClick={handleLogout}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[#444654] hover:text-white flex items-center"
+                  >
+                    <LogOut className="h-4 w-4 mr-2" />
+                    Logout
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -67,7 +150,7 @@ export default function DashboardPage() {
         {/* Content */}
         <main className="flex-1 overflow-auto p-6 bg-[#343541] text-white">
           <div className="mb-8">
-            <h1 className="text-3xl font-bold mb-2 text-white">Welcome back, John</h1>
+            <h1 className="text-3xl font-bold mb-2 text-white">Welcome back, {getFirstName()}</h1>
             <p className="text-gray-400">Your digital twin has been learning from your habits</p>
           </div>
 
