@@ -6,6 +6,7 @@ import { google } from 'googleapis';
 import * as auth from './auth.js';
 import * as aiApi from './ai-api.js';
 import * as emailService from './services/emailService.js';
+import calendarService from './services/calendarService.js';
 
 // Load environment variables
 dotenv.config();
@@ -611,46 +612,146 @@ app.post('/api/calendar/create-event', async (req, res) => {
   }
 });
 
-// Add Google OAuth callback endpoint for handling the redirect
+// Calendar routes
+app.get('/api/calendar/auth-url', auth.authMiddleware, async (req, res) => {
+  try {
+    const authUrl = calendarService.getAuthUrl();
+    res.json({ url: authUrl });
+  } catch (error) {
+    console.error('Error generating auth URL:', error);
+    res.status(500).json({ error: 'Failed to generate authentication URL' });
+  }
+});
+
 app.get('/api/auth/google/callback', async (req, res) => {
   try {
     const { code } = req.query;
     
     if (!code) {
-      return res.status(400).send('Authorization code is required');
+      return res.status(400).json({ error: 'Authorization code is required' });
     }
     
-    // Exchange the authorization code for tokens
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
+    const tokens = await calendarService.getTokens(code);
     
-    // Store tokens securely (in this example, we'll just redirect with access token)
-    // In a real application, you'd associate these tokens with the user's account
-    // tokens contains access_token, refresh_token, id_token, etc.
-    
-    // Redirect to frontend with access token
-    res.redirect(`${process.env.SITE_URL || 'http://localhost:3000'}/auth-success?access_token=${tokens.access_token}`);
+    // Redirect to client with access token
+    res.redirect(`http://localhost:3000/auth-success?access_token=${tokens.access_token}`);
   } catch (error) {
-    console.error('Google OAuth callback error:', error);
-    res.status(500).send('Authentication failed');
+    console.error('Error in Google callback:', error);
+    res.status(500).json({ error: 'Failed to exchange authorization code for tokens' });
   }
 });
 
-// Add an endpoint to get Google OAuth URL
-app.get('/api/auth/google/url', (req, res) => {
-  const scopes = [
-    'https://www.googleapis.com/auth/calendar',
-    'https://www.googleapis.com/auth/userinfo.email',
-    'https://www.googleapis.com/auth/userinfo.profile'
-  ];
-  
-  const authUrl = oauth2Client.generateAuthUrl({
-    access_type: 'offline', // 'offline' gets you a refresh token
-    scope: scopes,
-    prompt: 'consent'
-  });
-  
-  res.json({ url: authUrl });
+app.get('/api/calendar/events', auth.authMiddleware, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const accessToken = req.headers['x-google-token'];
+    
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Google access token is required' });
+    }
+    
+    // Validate date parameters
+    if (!start || !end) {
+      return res.status(400).json({ error: 'Start and end dates are required' });
+    }
+    
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid date format' });
+    }
+    
+    try {
+      const events = await calendarService.getAllEvents({ access_token: accessToken }, startDate, endDate);
+      res.json({ events });
+  } catch (error) {
+      if (error.message?.includes('invalid_grant') || error.message?.includes('Invalid Credentials')) {
+        return res.status(401).json({ error: 'Invalid Google credentials' });
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error fetching calendar events:', error);
+    res.status(500).json({ error: 'Failed to fetch calendar events' });
+  }
+});
+
+app.post('/api/calendar/create-event', auth.authMiddleware, async (req, res) => {
+  try {
+    const { event } = req.body;
+    const accessToken = req.headers['x-google-token'];
+    
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Google access token is required' });
+    }
+    
+    if (!event || !event.summary || !event.start || !event.end) {
+      return res.status(400).json({ error: 'Event details are required (summary, start, end)' });
+    }
+    
+    try {
+      const createdEvent = await calendarService.createCalendarEvent(
+        { access_token: accessToken },
+        event
+      );
+      
+      res.json({ event: createdEvent.data });
+    } catch (error) {
+      if (error.message?.includes('invalid_grant') || error.message?.includes('Invalid Credentials')) {
+        return res.status(401).json({ error: 'Invalid Google credentials' });
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error creating calendar event:', error);
+    res.status(500).json({ error: 'Failed to create calendar event' });
+  }
+});
+
+app.get('/api/calendar/holidays', auth.authMiddleware, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const accessToken = req.headers['x-google-token'];
+    
+    // Check if token is provided
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Google access token is required' });
+    }
+    
+    // Validate date parameters
+    if (!start || !end) {
+      return res.status(400).json({ error: 'Start and end dates are required' });
+    }
+    
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid date format' });
+    }
+    
+    // Set default calendar ID for Indian holidays
+    const calendarId = 'en.indian#holiday@group.v.calendar.google.com';
+    
+    try {
+      const holidays = await calendarService.getIndianHolidays(
+        { access_token: accessToken },
+        startDate,
+        endDate
+      );
+      
+      res.json({ holidays });
+    } catch (error) {
+      if (error.message?.includes('invalid_grant') || error.message?.includes('Invalid Credentials')) {
+        return res.status(401).json({ error: 'Invalid Google credentials' });
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error fetching holidays:', error);
+    res.status(500).json({ error: 'Failed to fetch holidays' });
+  }
 });
 
 // Chrome extension data processing
@@ -1121,7 +1222,7 @@ app.get('/api/email/config', auth.authMiddleware, async (req, res) => {
       });
     } else {
       // Password-based authentication
-      res.json({
+    res.json({
         configured: true,
         host: config.host,
         port: config.port,
@@ -1201,13 +1302,13 @@ app.post('/api/email/fetch', auth.authMiddleware, async (req, res) => {
         }
         
         // Get user email from user profile
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
           .select('email')
           .eq('id', userId)
-          .single();
-        
-        if (profileError) {
+      .single();
+    
+    if (profileError) {
           console.error('Error retrieving user profile:', profileError);
           
           // Try to get email from auth user if profile not found
@@ -1384,7 +1485,7 @@ app.post('/api/email/fetch', auth.authMiddleware, async (req, res) => {
               access_token: refreshed.accessToken,
               refresh_token: refreshed.refreshToken || tokens.refresh_token,
               expires_at: new Date(refreshed.expiresAt).toISOString(),
-              updated_at: new Date()
+          updated_at: new Date()
             })
             .eq('user_id', userId)
             .eq('provider', tokens.provider);
@@ -1586,7 +1687,7 @@ app.post('/api/email/manual-setup', auth.authMiddleware, async (req, res) => {
             port: emailConfig.port,
             secure: emailConfig.secure,
             provider: provider,
-            updated_at: new Date()
+        updated_at: new Date()
           }, {
             onConflict: 'user_id'
           });
@@ -1599,7 +1700,7 @@ app.post('/api/email/manual-setup', auth.authMiddleware, async (req, res) => {
       }
     }
     
-    res.json({ 
+    res.json({
       success: true, 
       message: 'Email settings updated successfully',
       email: email

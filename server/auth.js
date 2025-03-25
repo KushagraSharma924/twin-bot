@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
 
 // Load environment variables
 dotenv.config();
@@ -9,13 +10,15 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
 // Helper function to extract username from email
 const getUsernameFromEmail = (email) => {
   return email.split('@')[0];
 };
 
 // Authentication middleware that properly respects email verification
-export const authMiddleware = async (req, res, next) => {
+export const authMiddleware = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -24,52 +27,12 @@ export const authMiddleware = async (req, res, next) => {
     
     const token = authHeader.split(' ')[1];
     
-    // Better error handling with specific error logging
     try {
-      const { data, error } = await supabase.auth.getUser(token);
+      // Verify the token
+      const decoded = jwt.verify(token, JWT_SECRET);
       
-      if (error) {
-        console.error('Auth middleware error:', error.message);
-        return res.status(401).json({ error: error.message });
-      }
-      
-      // Check if email is verified
-      if (data.user && !data.user.email_confirmed_at) {
-        return res.status(403).json({ 
-          error: "Email not verified", 
-          message: "Please verify your email before accessing this resource"
-        });
-      }
-      
-      // Set the authenticated user on the request object
-      req.user = data.user;
-      
-      // Create a new session if token is about to expire (within 1 day)
-      const session = await supabase.auth.getSession();
-      if (session?.data?.session) {
-        const expiresAt = new Date(session.data.session.expires_at);
-        const now = new Date();
-        const oneDayFromNow = new Date(now.getTime() + (24 * 60 * 60 * 1000)); // 1 day in milliseconds
-        
-        if (expiresAt < oneDayFromNow) {
-          console.log('Refreshing session token to extend expiration');
-          // Refresh the session token
-          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-          
-          if (!refreshError && refreshData.session) {
-            // Set a new token with very long expiration (90 days)
-            const { data: updateData, error: updateError } = await supabase.auth.updateUser({
-              data: { extendedSession: true }
-            });
-            
-            if (!updateError) {
-              console.log('Extended session token successfully');
-              // You could add the new token to the response headers if needed
-              res.setHeader('X-New-Auth-Token', refreshData.session.access_token);
-            }
-          }
-        }
-      }
+      // Set the user on the request object
+      req.user = decoded;
       
       next();
     } catch (parseError) {

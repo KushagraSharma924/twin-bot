@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 18, 18, 18;
+  --background-end-rgb: 10, 10, 10;
+  
+  /* Supabase-inspired color palette */
+  --supabase-accent: #3ecf8e;
+  --supabase-accent-hover: #30b677;
+  --supabase-dark-bg: #1c1c1c;
+  --supabase-darker-bg: #131313;
+  --supabase-light-bg: #222222;
+  --supabase-lighter-bg: #333333;
+  --supabase-border: rgba(255, 255, 255, 0.1);
+  --supabase-inactive: #383838;
+  
+  /* Gradient colors */
+  --gradient-start: #3ecf8e;
+  --gradient-end: #3b82f6;
+}
+
+@layer base {
+  body {
+    @apply bg-[var(--supabase-darker-bg)] text-white;
+  }
+  
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: var(--supabase-darker-bg);
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: var(--supabase-inactive);
+    border-radius: 4px;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--supabase-accent);
+  }
+  
+  /* Smooth animations for all elements */
+  * {
+    @apply transition-colors duration-200;
+  }
+  
+  /* Better focus styles */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-[var(--supabase-accent)] ring-opacity-50;
+  }
+  
+  /* Calendar specific styles */
+  .calendar-day-hover {
+    @apply transition-all duration-300 transform hover:scale-[1.02] hover:shadow-lg z-10;
+  }
+  
+  .calendar-event {
+    @apply transition-all duration-200 transform hover:translate-y-[-2px] hover:shadow-md;
+  }
+  
+  /* Animation classes */
+  .animate-in {
+    animation-duration: 0.3s;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    animation-fill-mode: both;
+  }
+  
+  .fade-in-50 {
+    animation-name: fadeIn;
+  }
+  
+  .slide-in-from-top-5 {
+    animation-name: slideInFromTop;
+  }
+  
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  
+  @keyframes slideInFromTop {
+    from {
+      transform: translateY(-5px);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+  
+  /* Background gradient animation */
+  .bg-gradient-animated {
+    background: linear-gradient(-45deg, var(--supabase-darker-bg), var(--supabase-dark-bg), #1a2536, #192231);
+    background-size: 400% 400%;
+    animation: gradientBG 15s ease infinite;
+  }
+  
+  @keyframes gradientBG {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+  
+  /* Button hover effects */
+  .button-glow:hover {
+    box-shadow: 0 0 15px var(--supabase-accent);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground-rgb: 255, 255, 255;
+  }
+} 

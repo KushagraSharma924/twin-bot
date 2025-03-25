@@ -3,6 +3,16 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --gradient-start: #6366f1; /* Indigo */
+  --gradient-end: #8b5cf6; /* Purple */
+  --supabase-accent: #24b47e; /* Green from Supabase */
+  --supabase-accent-hover: #1ea672;
+  --supabase-darker-bg: #111827; /* Dark gray/almost black */
+  --supabase-dark-bg: #1f2937; /* Dark gray */
+  --supabase-light-bg: #374151; /* Medium-dark gray */
+  --supabase-lighter-bg: #4b5563; /* Medium gray */
+  --supabase-inactive: #6b7280; /* Gray for inactive states */
+  --supabase-border: #4b5563; /* Border color */
 }
 
 @theme inline {
@@ -23,4 +33,114 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-[var(--supabase-darker-bg)] text-white;
+  }
+  
+  input:focus, textarea:focus, select:focus {
+    @apply outline-none;
+    /* Remove the default translateY effect */
+    transform: none !important;
+    /* Add a subtle box-shadow instead */
+    box-shadow: 0 0 0 2px rgba(36, 180, 126, 0.2) !important;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+  }
+}
+
+/* Dialog animations */
+@keyframes dialog-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dialog-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes event-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dialog-content {
+  animation: dialog-slide-in 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.dialog-overlay {
+  animation: dialog-fade-in 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* Calendar day hover effects */
+.calendar-day {
+  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.calendar-day:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Event card animation */
+.event-card {
+  animation: event-fade-up 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  animation-fill-mode: both;
+}
+
+/* Staggered animation for event cards */
+.event-card:nth-child(1) { animation-delay: 0ms; }
+.event-card:nth-child(2) { animation-delay: 50ms; }
+.event-card:nth-child(3) { animation-delay: 100ms; }
+.event-card:nth-child(4) { animation-delay: 150ms; }
+.event-card:nth-child(5) { animation-delay: 200ms; }
+
+/* Event card hover effects */
+.event-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* Event details transition */
+.event-details {
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.event-details-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.event-details-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.event-details-exit {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.event-details-exit-active {
+  opacity: 0;
+  transform: translateY(10px);
 }
