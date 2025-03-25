@@ -1,0 +1,52 @@
+:root {
+  --supabase-dark-bg: #1e1e1e;      /* Slightly lighter */
+  --supabase-darker-bg: #151515;    /* Slightly lighter */
+  --supabase-light-bg: #282828;     /* Slightly lighter content area */
+  --supabase-lighter-bg: #323232;   /* New lightest shade for cards */
+  --supabase-accent: #3ecf8e;
+  --supabase-accent-hover: #34a874;
+  --supabase-inactive: #2a2a2a;     /* Slightly lighter */
+  --supabase-border: #2a2a2a;       /* Slightly lighter */
+  --supabase-border-dark: #383838;  /* Slightly lighter */
+}
+
+body {
+  background-color: var(--supabase-dark-bg);
+  color: white;
+}
+
+input:focus, button:focus {
+  outline-color: var(--supabase-accent) !important;
+  border-color: var(--supabase-accent) !important;
+}
+
+.bg-card, .bg-popover {
+  background-color: var(--supabase-lighter-bg);
+}
+
+.bg-background {
+  background-color: var(--supabase-darker-bg);
+}
+
+.bg-content {
+  background-color: var(--supabase-light-bg);
+}
+
+.border-border {
+  border-color: var(--supabase-border);
+}
+
+.text-primary, 
+.text-accent {
+  color: var(--supabase-accent);
+}
+
+button[data-accent="true"],
+a[data-accent="true"] {
+  background-color: var(--supabase-accent);
+}
+
+button[data-accent="true"]:hover,
+a[data-accent="true"]:hover {
+  background-color: var(--supabase-accent-hover);
+} 

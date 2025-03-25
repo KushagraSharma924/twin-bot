@@ -415,66 +415,66 @@ export default function TwinBotChatPage() {
   }, [])
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#202123]">
+    <div className="flex h-screen overflow-hidden bg-[#242123]">
       {/* Main Sidebar - keep original behavior */}
       <Sidebar activePage="chat" />
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-[#343541]" ref={mainContentRef}>
+      <div className="flex-1 flex flex-col overflow-hidden bg-[#121212]" ref={mainContentRef}>
         {/* Header */}
-        <header className="bg-[#343541] border-b border-gray-700 h-16 flex items-center px-4 md:px-6 z-10">
+        <header className="bg-[#121212] border-b border-gray-800 h-16 flex items-center px-4 md:px-6 z-10">
           <div className="flex-1 flex items-center">
             <h1 className="text-lg md:text-xl font-bold text-white">TwinBot Chat</h1>
-            <Badge variant="outline" className="ml-2 md:ml-3 bg-[#10a37f]/10 text-[#10a37f] border-[#10a37f]/20">
+            <Badge variant="outline" className="ml-2 md:ml-3 bg-[#3ecf8e]/10 text-[#3ecf8e] border-[#3ecf8e]/20">
               Beta
             </Badge>
           </div>
           <div className="flex items-center space-x-2 md:space-x-4">
             <button
               onClick={() => setIsChatHistoryOpen(!isChatHistoryOpen)}
-              className="text-gray-300 hover:text-white hover:bg-[#444654] p-2 rounded-md"
+              className="text-gray-300 hover:text-white hover:bg-[#272727] p-2 rounded-md"
               aria-label="Toggle chat history"
             >
               <PanelLeft className="h-5 w-5" />
             </button>
-            <button className="relative text-gray-300 hover:text-white hover:bg-[#444654] p-2 rounded-md">
+            <button className="relative text-gray-300 hover:text-white hover:bg-[#272727] p-2 rounded-md">
               <Bell className="h-5 w-5" />
-              <span className="absolute top-1 right-1 h-2 w-2 bg-[#10a37f] rounded-full"></span>
+              <span className="absolute top-1 right-1 h-2 w-2 bg-[#3ecf8e] rounded-full"></span>
             </button>
             <div className="relative" ref={profileRef}>
               <button 
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="flex items-center hover:bg-[#444654] p-1 rounded-md transition-colors"
+                className="flex items-center hover:bg-[#272727] p-1 rounded-md transition-colors"
               >
                 <Avatar className="h-8 w-8">
-                  <AvatarFallback className="bg-[#444654] text-white">{getUserInitials()}</AvatarFallback>
+                  <AvatarFallback className="bg-[#272727] text-white">{getUserInitials()}</AvatarFallback>
                 </Avatar>
                 <ChevronDown className={`h-4 w-4 ml-1 text-gray-400 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
               </button>
               
               {isProfileOpen && (
-                <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-[#202123] ring-1 ring-black ring-opacity-5 z-50">
-                  <div className="px-4 py-2 border-b border-gray-700">
+                <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-[#1c1c1c] ring-1 ring-black ring-opacity-5 z-50">
+                  <div className="px-4 py-2 border-b border-gray-800">
                     <p className="text-sm font-medium text-white">{user?.name || 'User'}</p>
                     <p className="text-xs text-gray-400">{user?.email || ''}</p>
                   </div>
                   <Link 
                     href="/dashboard/profile" 
-                    className="block px-4 py-2 text-sm text-gray-300 hover:bg-[#444654] hover:text-white flex items-center"
+                    className="block px-4 py-2 text-sm text-gray-300 hover:bg-[#272727] hover:text-white flex items-center"
                   >
                     <User className="h-4 w-4 mr-2" />
                     Profile
                   </Link>
                   <Link 
                     href="/dashboard/settings" 
-                    className="block px-4 py-2 text-sm text-gray-300 hover:bg-[#444654] hover:text-white flex items-center"
+                    className="block px-4 py-2 text-sm text-gray-300 hover:bg-[#272727] hover:text-white flex items-center"
                   >
                     <Settings className="h-4 w-4 mr-2" />
                     Settings
                   </Link>
                   <button 
                     onClick={handleLogout}
-                    className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[#444654] hover:text-white flex items-center"
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[#272727] hover:text-white flex items-center"
                   >
                     <LogOut className="h-4 w-4 mr-2" />
                     Logout
@@ -488,7 +488,7 @@ export default function TwinBotChatPage() {
         {/* Chat Interface with Dynamic Width */}
         <div className="flex-1 flex overflow-hidden relative">
           {/* Messages Area */}
-          <div className="flex-1 flex flex-col h-full overflow-hidden bg-gradient-to-b from-[#343541] to-[#2c2c3a]">
+          <div className="flex-1 flex flex-col h-full overflow-hidden bg-gradient-to-b from-[#121212] to-[#1a1a1a]">
             <ScrollArea className="flex-1 py-2 w-full">
               <div className="space-y-4 w-full px-4">
                 {messages.map((message) => (
@@ -499,14 +499,14 @@ export default function TwinBotChatPage() {
                     <div
                       className={`max-w-[85%] rounded-lg py-2 px-3 shadow-sm ${
                         message.isUser
-                          ? "bg-[#10a37f] text-white"
-                          : "bg-[#444654] text-white"
+                          ? "bg-[#3ecf8e] text-white"
+                          : "bg-[#272727] text-white"
                       }`}
                     >
                       <div className="flex items-start gap-2">
                         {!message.isUser && (
                           <Avatar className="h-6 w-6 mt-0.5 flex-shrink-0">
-                            <AvatarFallback className="bg-[#10a37f] text-white text-xs">TB</AvatarFallback>
+                            <AvatarFallback className="bg-[#3ecf8e] text-white text-xs">TB</AvatarFallback>
                           </Avatar>
                         )}
                         <div className="flex-1 min-w-0">
@@ -520,7 +520,7 @@ export default function TwinBotChatPage() {
                         </div>
                         {message.isUser && (
                           <Avatar className="h-6 w-6 mt-0.5 flex-shrink-0">
-                            <AvatarFallback className="bg-[#444654] text-white text-xs">{getUserInitials()}</AvatarFallback>
+                            <AvatarFallback className="bg-[#272727] text-white text-xs">{getUserInitials()}</AvatarFallback>
                           </Avatar>
                         )}
                       </div>
@@ -532,22 +532,22 @@ export default function TwinBotChatPage() {
             </ScrollArea>
 
             {/* Message Input */}
-            <div className="bg-[#343541] border-t border-gray-700 p-2 px-4 w-full">
+            <div className="bg-[#121212] border-t border-gray-800 p-2 px-4 w-full">
               <form onSubmit={handleSendMessage} className="w-full mx-auto relative">
                 <Input
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   placeholder="Type your message..."
-                  className="flex-1 bg-[#40414f] border-gray-700 text-white text-sm placeholder:text-gray-500 focus:border-[#10a37f] focus:ring-[#10a37f] pr-10 h-10 rounded-lg shadow-sm w-full"
+                  className="flex-1 bg-[#1c1c1c] border-gray-800 text-white text-sm placeholder:text-gray-500 focus:border-[#3ecf8e] focus:ring-[#3ecf8e] pr-10 h-10 rounded-lg shadow-sm w-full"
                   disabled={isLoading}
                 />
                 <button
                   type="submit"
                   className={`absolute right-1.5 top-1.5 ${
                     isLoading 
-                      ? "bg-[#0e8f6f] cursor-not-allowed" 
-                      : "bg-[#10a37f] hover:bg-[#0e8f6f]"
-                  } text-white p-1.5 rounded-md focus:outline-none focus:ring-1 focus:ring-[#10a37f] focus:ring-opacity-50 transition-colors`}
+                      ? "bg-[#34a874] cursor-not-allowed" 
+                      : "bg-[#3ecf8e] hover:bg-[#34a874]"
+                  } text-white p-1.5 rounded-md focus:outline-none focus:ring-1 focus:ring-[#3ecf8e] focus:ring-opacity-50 transition-colors`}
                   disabled={isLoading}
                 >
                   <Send className="h-4 w-4" />
@@ -559,7 +559,7 @@ export default function TwinBotChatPage() {
           {/* Chat History Sidebar with smooth transitions */}
           <div 
             id="chat-history-sidebar"
-            className={`${mobileView ? 'fixed inset-y-0 right-0 z-50' : 'relative'} bg-[#202123] border-l border-gray-700 
+            className={`${mobileView ? 'fixed inset-y-0 right-0 z-50' : 'relative'} bg-[#1c1c1c] border-l border-gray-800 
                        transition-all duration-300 ease-in-out transform
                        ${isChatHistoryOpen 
                          ? 'translate-x-0' : mobileView ? 'translate-x-full' : 'w-0'}`}
@@ -570,13 +570,13 @@ export default function TwinBotChatPage() {
             }}
           >
             <div className="flex flex-col h-full">
-              <div className="p-3 border-b border-gray-700 flex items-center justify-between">
+              <div className="p-3 border-b border-gray-800 flex items-center justify-between">
                 <h2 className="text-sm font-medium text-white">Chat History</h2>
                 <div className="flex items-center space-x-2">
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="p-1 h-auto text-gray-300 hover:text-white hover:bg-[#343541]"
+                    className="p-1 h-auto text-gray-300 hover:text-white hover:bg-[#272727]"
                     onClick={createNewChat}
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -585,7 +585,7 @@ export default function TwinBotChatPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="p-1 h-auto text-gray-300 hover:text-white hover:bg-[#343541]"
+                      className="p-1 h-auto text-gray-300 hover:text-white hover:bg-[#272727]"
                       onClick={() => setIsChatHistoryOpen(false)}
                     >
                       <X className="h-3.5 w-3.5" />
@@ -599,12 +599,12 @@ export default function TwinBotChatPage() {
                     <div
                       key={chat.id}
                       onClick={() => switchToChat(chat.id)}
-                      className={`group w-full text-left p-2 rounded-md hover:bg-[#343541] cursor-pointer transition-colors ${
-                        activeChatId === chat.id ? 'bg-[#343541]' : ''
+                      className={`group w-full text-left p-2 rounded-md hover:bg-[#272727] cursor-pointer transition-colors ${
+                        activeChatId === chat.id ? 'bg-[#272727]' : ''
                       }`}
                     >
                       <div className="flex items-start">
-                        <MessageSquare className={`h-3.5 w-3.5 mr-2 mt-0.5 ${activeChatId === chat.id ? 'text-[#10a37f]' : 'text-gray-400'}`} />
+                        <MessageSquare className={`h-3.5 w-3.5 mr-2 mt-0.5 ${activeChatId === chat.id ? 'text-[#3ecf8e]' : 'text-gray-400'}`} />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-white truncate">
                             {chat.title}
@@ -633,10 +633,10 @@ export default function TwinBotChatPage() {
                   ))}
                 </div>
               </ScrollArea>
-              <div className="p-2 border-t border-gray-700">
+              <div className="p-2 border-t border-gray-800">
                 <Button 
                   onClick={createNewChat}
-                  className="w-full bg-[#10a37f] hover:bg-[#0e8f6f] text-white flex items-center justify-center gap-1.5 py-1.5 text-xs rounded-md transition-colors"
+                  className="w-full bg-[#3ecf8e] hover:bg-[#34a874] text-white flex items-center justify-center gap-1.5 py-1.5 text-xs rounded-md transition-colors"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   <span>New Chat</span>

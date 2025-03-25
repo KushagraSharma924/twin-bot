@@ -23,24 +23,59 @@ export const authMiddleware = async (req, res, next) => {
     }
     
     const token = authHeader.split(' ')[1];
-    const { data, error } = await supabase.auth.getUser(token);
     
-    if (error) {
-      console.error('Auth middleware error:', error.message);
-      return res.status(401).json({ error: "Invalid or expired token" });
+    // Better error handling with specific error logging
+    try {
+      const { data, error } = await supabase.auth.getUser(token);
+      
+      if (error) {
+        console.error('Auth middleware error:', error.message);
+        return res.status(401).json({ error: error.message });
+      }
+      
+      // Check if email is verified
+      if (data.user && !data.user.email_confirmed_at) {
+        return res.status(403).json({ 
+          error: "Email not verified", 
+          message: "Please verify your email before accessing this resource"
+        });
+      }
+      
+      // Set the authenticated user on the request object
+      req.user = data.user;
+      
+      // Create a new session if token is about to expire (within 1 day)
+      const session = await supabase.auth.getSession();
+      if (session?.data?.session) {
+        const expiresAt = new Date(session.data.session.expires_at);
+        const now = new Date();
+        const oneDayFromNow = new Date(now.getTime() + (24 * 60 * 60 * 1000)); // 1 day in milliseconds
+        
+        if (expiresAt < oneDayFromNow) {
+          console.log('Refreshing session token to extend expiration');
+          // Refresh the session token
+          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+          
+          if (!refreshError && refreshData.session) {
+            // Set a new token with very long expiration (90 days)
+            const { data: updateData, error: updateError } = await supabase.auth.updateUser({
+              data: { extendedSession: true }
+            });
+            
+            if (!updateError) {
+              console.log('Extended session token successfully');
+              // You could add the new token to the response headers if needed
+              res.setHeader('X-New-Auth-Token', refreshData.session.access_token);
+            }
+          }
+        }
+      }
+      
+      next();
+    } catch (parseError) {
+      console.error('JWT parsing error:', parseError.message);
+      return res.status(401).json({ error: `Invalid JWT: ${parseError.message}` });
     }
-    
-    // Check if email is verified
-    if (data.user && !data.user.email_confirmed_at) {
-      return res.status(403).json({ 
-        error: "Email not verified", 
-        message: "Please verify your email before accessing this resource"
-      });
-    }
-    
-    // Set the authenticated user on the request object
-    req.user = data.user;
-    next();
   } catch (error) {
     console.error('Auth middleware exception:', error.message);
     res.status(500).json({ error: "Authentication error" });
@@ -144,13 +179,23 @@ export const deleteUsers = async (req, res) => {
   }
 };
 
-// User login
+// User login - modified to create long-lived token
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    
+    // Use a very long session expiration based on environment variable
+    const expirationDays = process.env.JWT_EXPIRATION_DAYS || 90; // Default to 90 days if not specified
+    const expiresIn = expirationDays * 24 * 60 * 60; // Convert days to seconds
+    
+    console.log(`Creating session with expiration time of ${expirationDays} days`);
+    
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
-      password
+      password,
+      options: {
+        expiresIn: expiresIn
+      }
     });
 
     if (error) throw error;

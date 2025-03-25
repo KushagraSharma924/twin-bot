@@ -1,12 +1,15 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import Sidebar from "@/components/sidebar"
+import { getUser, logout } from "@/lib/api"
+import { toast } from "sonner"
 import {
   Bell,
   ChevronDown,
@@ -19,6 +22,10 @@ import {
   Users,
   Video,
   MapPin,
+  User,
+  Settings,
+  LogOut,
+  MessageSquare
 } from "lucide-react"
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -39,9 +46,45 @@ interface Event {
 }
 
 export default function CalendarPage() {
+  const router = useRouter()
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [isProfileOpen, setIsProfileOpen] = useState(false)
+  const [user, setUser] = useState<{ id: string; email: string; name?: string } | null>(null)
+  const profileRef = useRef<HTMLDivElement>(null)
+  
+  useEffect(() => {
+    const currentUser = getUser()
+    if (!currentUser) {
+      router.push('/login')
+    } else {
+      setUser(currentUser)
+    }
+    
+    // Close dropdown when clicking outside
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+        setIsProfileOpen(false)
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [router])
+
+  const handleLogout = () => {
+    logout()
+    toast.success("Logged out successfully")
+    router.push('/login')
+  }
+
+  const getUserInitials = () => {
+    if (!user?.name) return 'U'
+    return user.name.split(' ').map(part => part[0]).join('')
+  }
   
   const today = new Date();
   const todayDate = today.getDate();
@@ -58,7 +101,7 @@ export default function CalendarPage() {
       day: todayDate,
       participants: ["Alex Johnson", "Sarah Wilson", "Michael Brown"],
       isOnline: true,
-      color: "bg-blue-500"
+      color: "bg-[var(--supabase-accent)]"
     },
     {
       id: 2,
@@ -90,7 +133,7 @@ export default function CalendarPage() {
       participants: ["Anna White", "Robert Lee", "Jessica Clark"],
       location: "Main Office",
       isOnline: false,
-      color: "bg-[#10a37f]"
+      color: "bg-[var(--supabase-accent)]"
     }
   ];
 
@@ -111,7 +154,7 @@ export default function CalendarPage() {
     
     // Add empty cells for days before the first day of the month
     for (let i = 0; i < firstDayOfMonth; i++) {
-      days.push(<div key={`empty-${i}`} className="h-24 border border-gray-700 bg-[#343541]"></div>);
+      days.push(<div key={`empty-${i}`} className="h-24 border border-[var(--supabase-border)] bg-[var(--supabase-dark-bg)]"></div>);
     }
     
     // Add cells for each day of the month
@@ -122,14 +165,14 @@ export default function CalendarPage() {
       days.push(
         <div 
           key={day} 
-          className={`h-24 border border-gray-700 ${isToday ? 'bg-[#444654]' : 'bg-[#343541]'} p-1 overflow-hidden`}
+          className={`h-24 border border-[var(--supabase-border)] ${isToday ? 'bg-[var(--supabase-inactive)]' : 'bg-[var(--supabase-dark-bg)]'} p-1 overflow-hidden`}
         >
           <div className="flex justify-between items-center">
-            <span className={`text-sm font-medium ${isToday ? 'bg-[#10a37f] text-white h-6 w-6 rounded-full flex items-center justify-center' : 'text-gray-300'}`}>
+            <span className={`text-sm font-medium ${isToday ? 'bg-[var(--supabase-accent)] text-white h-6 w-6 rounded-full flex items-center justify-center' : 'text-gray-300'}`}>
               {day}
             </span>
             {dayEvents.length > 0 && (
-              <Badge className="bg-[#10a37f]/20 text-[#10a37f] text-xs">{dayEvents.length}</Badge>
+              <Badge className="bg-[var(--supabase-accent)]/20 text-[var(--supabase-accent)] text-xs">{dayEvents.length}</Badge>
             )}
           </div>
           <div className="mt-1 space-y-1">
@@ -168,17 +211,17 @@ export default function CalendarPage() {
   };
 
   return (
-    <div className="flex h-screen bg-[#202123]">
+    <div className="flex h-screen bg-[var(--supabase-dark-bg)]">
       {/* Sidebar */}
       <Sidebar activePage="calendar" />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-[#343541]">
+      <div className="flex-1 flex flex-col overflow-hidden bg-[var(--supabase-darker-bg)]">
         {/* Header */}
-        <header className="bg-[#343541] border-b border-gray-700 h-16 flex items-center px-6">
+        <header className="bg-[var(--supabase-darker-bg)] border-b border-[var(--supabase-border)] h-16 flex items-center px-6">
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="md:hidden mr-2 text-gray-300 hover:text-white hover:bg-[#444654] p-2 rounded-md"
+            className="md:hidden mr-2 text-gray-300 hover:text-white hover:bg-[var(--supabase-inactive)] p-2 rounded-md"
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -187,20 +230,20 @@ export default function CalendarPage() {
             <div className="ml-6 flex items-center space-x-2">
               <button 
                 onClick={goToPreviousMonth}
-                className="text-gray-300 hover:text-white p-1 rounded-md hover:bg-[#444654]"
+                className="text-gray-300 hover:text-white p-1 rounded-md hover:bg-[var(--supabase-inactive)]"
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
               <span className="text-white font-medium">{MONTHS[currentMonth]} {currentYear}</span>
               <button 
                 onClick={goToNextMonth}
-                className="text-gray-300 hover:text-white p-1 rounded-md hover:bg-[#444654]"
+                className="text-gray-300 hover:text-white p-1 rounded-md hover:bg-[var(--supabase-inactive)]"
               >
                 <ChevronRight className="h-5 w-5" />
               </button>
             </div>
             <div className="ml-4">
-              <button className="bg-[#10a37f] text-white px-3 py-1.5 rounded-md hover:bg-[#0e8f6f] flex items-center">
+              <button className="bg-[var(--supabase-accent)] text-white px-3 py-1.5 rounded-md hover:bg-[var(--supabase-accent-hover)] flex items-center">
                 <Plus className="h-4 w-4 mr-1" />
                 <span>New Event</span>
               </button>
@@ -209,31 +252,69 @@ export default function CalendarPage() {
           <div className="ml-4 relative">
             <Input 
               placeholder="Search events..." 
-              className="w-40 md:w-52 bg-[#40414f] border-gray-700 text-white placeholder:text-gray-500 focus:border-[#10a37f] focus:ring-[#10a37f]"
+              className="w-40 md:w-52 bg-[var(--supabase-dark-bg)] border-[var(--supabase-border)] text-white placeholder:text-gray-500 focus:border-[var(--supabase-accent)] focus:ring-[var(--supabase-accent)]"
             />
             <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-500" />
           </div>
           <div className="flex items-center space-x-4 ml-4">
-            <button className="relative text-gray-300 hover:text-white hover:bg-[#444654] p-2 rounded-md">
+            <button className="relative text-gray-300 hover:text-white hover:bg-[var(--supabase-inactive)] p-2 rounded-md">
               <Bell className="h-5 w-5" />
-              <span className="absolute top-1 right-1 h-2 w-2 bg-[#10a37f] rounded-full"></span>
+              <span className="absolute top-1 right-1 h-2 w-2 bg-[var(--supabase-accent)] rounded-full"></span>
             </button>
-            <div className="flex items-center">
-              <Avatar className="h-8 w-8">
-                <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
-                <AvatarFallback className="bg-[#444654] text-white">JD</AvatarFallback>
-              </Avatar>
-              <ChevronDown className="h-4 w-4 ml-1 text-gray-400" />
+            <Link href="/dashboard/twinbot" className="text-gray-300 hover:text-white hover:bg-[var(--supabase-inactive)] p-2 rounded-md block">
+              <MessageSquare className="h-5 w-5" />
+            </Link>
+            <div className="relative" ref={profileRef}>
+              <button 
+                onClick={() => setIsProfileOpen(!isProfileOpen)}
+                className="flex items-center hover:bg-[var(--supabase-inactive)] p-1 rounded-md transition-colors"
+              >
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
+                  <AvatarFallback className="bg-[var(--supabase-inactive)] text-white">{getUserInitials()}</AvatarFallback>
+                </Avatar>
+                <ChevronDown className={`h-4 w-4 ml-1 text-gray-400 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {isProfileOpen && (
+                <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-[var(--supabase-dark-bg)] ring-1 ring-black ring-opacity-5 z-50">
+                  <div className="px-4 py-2 border-b border-[var(--supabase-border)]">
+                    <p className="text-sm font-medium text-white">{user?.name || 'User'}</p>
+                    <p className="text-xs text-gray-400">{user?.email || ''}</p>
+                  </div>
+                  <Link 
+                    href="/dashboard/profile" 
+                    className="block px-4 py-2 text-sm text-gray-300 hover:bg-[var(--supabase-inactive)] hover:text-white flex items-center"
+                  >
+                    <User className="h-4 w-4 mr-2" />
+                    Profile
+                  </Link>
+                  <Link 
+                    href="/dashboard/settings" 
+                    className="block px-4 py-2 text-sm text-gray-300 hover:bg-[var(--supabase-inactive)] hover:text-white flex items-center"
+                  >
+                    <Settings className="h-4 w-4 mr-2" />
+                    Settings
+                  </Link>
+                  <button 
+                    onClick={handleLogout}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[var(--supabase-inactive)] hover:text-white flex items-center"
+                  >
+                    <LogOut className="h-4 w-4 mr-2" />
+                    Logout
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>
 
         {/* Content */}
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden bg-[var(--supabase-light-bg)]">
           {/* Calendar with Events */}
           <div className="flex-1 flex flex-col overflow-hidden">
             {/* Day Labels */}
-            <div className="grid grid-cols-7 bg-[#343541]">
+            <div className="grid grid-cols-7 bg-[var(--supabase-dark-bg)]">
               {DAYS.map(day => (
                 <div key={day} className="py-2 text-center text-sm font-medium text-gray-400">
                   {day}
@@ -248,81 +329,75 @@ export default function CalendarPage() {
               </div>
             </ScrollArea>
           </div>
-          
-          {/* Event Details Sidebar */}
-          <div className="hidden md:block w-80 border-l border-gray-700 bg-[#202123] p-4 overflow-hidden flex-col">
-            <h2 className="text-lg font-bold text-white mb-4">Today's Events</h2>
-            <ScrollArea className="flex-1">
-              <div className="space-y-4">
+
+          {/* Event Details Panel */}
+          <div className="w-80 border-l border-[var(--supabase-border)] bg-[var(--supabase-dark-bg)] hidden md:block overflow-hidden">
+            <div className="p-4 border-b border-[var(--supabase-border)]">
+              <h3 className="text-lg font-medium text-white">Today's Events</h3>
+              <p className="text-sm text-gray-400">{MONTHS[today.getMonth()]} {today.getDate()}, {today.getFullYear()}</p>
+            </div>
+            <ScrollArea className="h-full">
+              <div className="p-4 space-y-4">
                 {events
                   .filter(event => event.day === todayDate)
                   .map(event => (
-                    <div 
-                      key={event.id} 
-                      className="p-3 rounded-md bg-[#343541] border border-gray-700 hover:bg-[#444654] transition-colors"
-                    >
-                      <div className="flex items-start">
-                        <div className={`${event.color} w-1 h-full self-stretch rounded-full mr-3`}></div>
-                        <div className="flex-1">
-                          <h3 className="text-white font-medium">{event.title}</h3>
-                          <p className="text-gray-400 text-sm flex items-center mt-1">
-                            <Clock className="h-3.5 w-3.5 mr-1" /> 
-                            {event.startTime} - {event.endTime}
-                          </p>
-                          {event.location && (
-                            <p className="text-gray-400 text-sm flex items-center mt-1">
-                              <MapPin className="h-3.5 w-3.5 mr-1" /> 
-                              {event.location}
-                            </p>
-                          )}
-                          {event.isOnline && (
-                            <p className="text-gray-400 text-sm flex items-center mt-1">
-                              <Video className="h-3.5 w-3.5 mr-1" /> 
-                              Online Meeting
-                            </p>
-                          )}
-                          <div className="mt-2">
-                            <p className="text-gray-400 text-sm flex items-center">
-                              <Users className="h-3.5 w-3.5 mr-1" /> 
-                              {event.participants.length} participants
-                            </p>
-                          </div>
-                          <div className="mt-3 flex space-x-2">
-                            <button className="text-xs bg-[#343541] text-white px-2 py-1 rounded hover:bg-[#444654]">
-                              Edit
-                            </button>
-                            <button className="text-xs bg-[#343541] text-white px-2 py-1 rounded hover:bg-[#444654]">
-                              Join
-                            </button>
-                          </div>
+                    <div key={event.id} className="border border-[var(--supabase-border)] rounded-lg p-3 bg-[var(--supabase-lighter-bg)]">
+                      <div className="flex justify-between items-start">
+                        <h4 className="font-medium text-white">{event.title}</h4>
+                        <Badge className={`${event.color} text-white`}>{event.startTime}</Badge>
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        <div className="flex items-center text-sm text-gray-400">
+                          <Clock className="h-4 w-4 mr-1" />
+                          <span>{event.startTime} - {event.endTime}</span>
                         </div>
+                        {event.location && (
+                          <div className="flex items-center text-sm text-gray-400">
+                            <MapPin className="h-4 w-4 mr-1" />
+                            <span>{event.location}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center text-sm text-gray-400">
+                          <Users className="h-4 w-4 mr-1" />
+                          <span>{event.participants.length} participants</span>
+                        </div>
+                        {event.isOnline && (
+                          <div className="flex items-center text-sm text-gray-400">
+                            <Video className="h-4 w-4 mr-1" />
+                            <span>Online meeting</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-3 flex justify-between">
+                        <div className="flex -space-x-2">
+                          {event.participants.slice(0, 3).map((participant, index) => (
+                            <Avatar key={index} className="h-6 w-6 border-2 border-[var(--supabase-dark-bg)]">
+                              <AvatarFallback className="bg-[var(--supabase-inactive)] text-white text-xs">
+                                {participant.split(' ').map(n => n[0]).join('')}
+                              </AvatarFallback>
+                            </Avatar>
+                          ))}
+                          {event.participants.length > 3 && (
+                            <div className="h-6 w-6 rounded-full bg-[var(--supabase-dark-bg)] border-2 border-[var(--supabase-dark-bg)] flex items-center justify-center">
+                              <span className="text-xs text-gray-400">+{event.participants.length - 3}</span>
+                            </div>
+                          )}
+                        </div>
+                        <button className="text-xs text-[var(--supabase-accent)] hover:text-[var(--supabase-accent-hover)]">
+                          View Details
+                        </button>
                       </div>
                     </div>
                   ))}
-              </div>
-              
-              {/* Upcoming Events Section */}
-              <h2 className="text-lg font-bold text-white mt-6 mb-4">Upcoming Events</h2>
-              <div className="space-y-4">
-                {events
-                  .filter(event => event.day > todayDate)
-                  .slice(0, 3)
-                  .map(event => (
-                    <div 
-                      key={event.id} 
-                      className="p-3 rounded-md bg-[#343541] border border-gray-700 hover:bg-[#444654] transition-colors"
-                    >
-                      <div className="flex items-start">
-                        <div className={`${event.color} w-1 h-full self-stretch rounded-full mr-3`}></div>
-                        <div>
-                          <h3 className="text-white font-medium">{event.title}</h3>
-                          <p className="text-gray-400 text-sm mt-1">
-                            Day {event.day}, {event.startTime}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+
+                {events.filter(event => event.day === todayDate).length === 0 && (
+                  <div className="text-center py-8">
+                    <p className="text-gray-400">No events scheduled for today</p>
+                    <button className="mt-2 text-[var(--supabase-accent)] hover:text-[var(--supabase-accent-hover)] text-sm">
+                      + Add Event
+                    </button>
+                  </div>
+                )}
               </div>
             </ScrollArea>
           </div>
