@@ -10,6 +10,7 @@ import { authMiddleware, adminMiddleware, emailMiddleware } from './server/middl
 import authRoutes from './server/routes/auth.js';
 import emailRoutes from './server/routes/email.js';
 import aiRoutes from './server/routes/ai.js';
+import calendarRoutes from './server/routes/calendar.js';
 
 // Create Express app
 const app = express();
@@ -26,8 +27,8 @@ app.use(express.static('public'));
 app.use('/api/auth', authRoutes);
 app.use('/api/email', emailMiddleware, emailRoutes);
 app.use('/api/ai', authMiddleware, aiRoutes);
+app.use('/api/calendar', authMiddleware, calendarRoutes);
 app.use('/api/twin', authMiddleware);
-app.use('/api/calendar', authMiddleware);
 app.use('/api/browser', authMiddleware);
 app.use('/api/user', authMiddleware);
 app.use('/api/admin', adminMiddleware);
@@ -54,4 +55,7 @@ app.listen(PORT, () => {
   console.log('- POST /api/ai/gemini');
   console.log('- POST /api/ai/openai');
   console.log('- POST /api/ai/embed');
+  console.log('- POST /api/calendar/create-event');
+  console.log('- GET /api/calendar/events');
+  console.log('- GET /api/calendar/holidays');
 }); 

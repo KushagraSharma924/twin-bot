@@ -35,13 +35,15 @@ The `middleware/auth.js` file contains:
 Each route file defines a specific set of API endpoints:
 - `routes/auth.js` - Authentication, user management, profiles
 - `routes/email.js` - Email fetching, mailboxes, OAuth flows
+- `routes/ai.js` - AI text generation and embeddings
+- `routes/calendar.js` - Calendar events and holidays
 
 ### Services
 
 Service modules contain reusable business logic:
 - `services/emailService.js` - Email fetching, IMAP connections
-- `services/calendarService.js` - Calendar integration
-- `services/nlpService.js` - Natural language processing
+- `services/calendarService.js` - Calendar integration with Google Calendar
+- `services/aiService.js` - AI services with Gemini and OpenAI
 - `services/supabaseService.js` - Database operations
 - `services/reinforcementLearningService.js` - ML/RL functionality
 

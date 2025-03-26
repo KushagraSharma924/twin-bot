@@ -14,7 +14,15 @@ A modern Node.js server application for managing email retrieval and interaction
 │   │   └── schemas/       # SQL schema files
 │   ├── middleware/        # Express middleware
 │   ├── routes/            # API routes definitions
+│   │   ├── auth.js        # Authentication routes
+│   │   ├── email.js       # Email routes
+│   │   ├── calendar.js    # Calendar routes
+│   │   └── ai.js          # AI routes
 │   ├── services/          # Service modules
+│   │   ├── emailService.js      # Email functionality
+│   │   ├── calendarService.js   # Calendar functionality
+│   │   ├── aiService.js         # AI functionality
+│   │   └── ...            # Other service modules
 │   └── utils/             # Utility functions
 └── public/                # Static files for frontend
 ```
@@ -24,6 +32,7 @@ A modern Node.js server application for managing email retrieval and interaction
 - OAuth-based email authentication
 - Email fetching via IMAP
 - Mailbox management
+- Calendar integration with Google Calendar
 - AI integration with OpenAI and Google Gemini
 
 ## API Endpoints
@@ -39,6 +48,11 @@ A modern Node.js server application for managing email retrieval and interaction
   - `/api/email/oauth2/authorize` - Start OAuth2 flow
   - `/api/email/oauth2/callback` - OAuth2 callback
   - `/api/email/config` - Get email configuration
+
+- **Calendar**
+  - `/api/calendar/create-event` - Create a calendar event
+  - `/api/calendar/events` - Get calendar events
+  - `/api/calendar/holidays` - Get holidays
 
 - **AI**
   - `/api/ai/gemini` - Generate text with Google Gemini
