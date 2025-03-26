@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import Sidebar from "@/components/sidebar"
 import { getUser, logout } from "@/lib/api"
-import { sendMessage } from "@/lib/ai-api"
+import { sendMessage, createAICalendarEvent, createSimpleCalendarEvent } from "@/lib/ai-api"
 import {
   Bell,
   ChevronDown,
@@ -25,7 +25,8 @@ import {
   X,
   User,
   Settings,
-  LogOut
+  LogOut,
+  Calendar
 } from "lucide-react"
 
 interface Message {
@@ -208,6 +209,66 @@ export default function TwinBotChatPage() {
     typeNextChar();
   };
 
+  // Helper function to detect calendar event requests
+  const checkIfCalendarEventRequest = (message: string): boolean => {
+    const lowerMessage = message.toLowerCase().trim();
+    
+    // More specific patterns for calendar events with dates
+    // First check for explicit calendar creation phrases
+    const explicitPatterns = [
+      /create\s+(?:a\s+)?(?:new\s+)?(?:calendar\s+)?event/i,
+      /add\s+(?:a\s+)?(?:new\s+)?(?:calendar\s+)?event/i,
+      /schedule\s+(?:a\s+)?(?:new\s+)?(?:meeting|appointment|call)/i,
+      /set\s+up\s+(?:a\s+)?(?:meeting|appointment|call)/i,
+      /plan\s+(?:a\s+)?(?:meeting|event|appointment)/i,
+      /put\s+(?:this\s+)?(?:on|in)\s+(?:my\s+)?calendar/i,
+      /add\s+to\s+(?:my\s+)?calendar/i,
+      /book\s+(?:a\s+)?(?:meeting|appointment|room)/i,
+    ];
+    
+    for (const pattern of explicitPatterns) {
+      if (pattern.test(lowerMessage)) {
+        console.log('Detected calendar event request (explicit pattern):', lowerMessage);
+        return true;
+      }
+    }
+    
+    // Check for date/time patterns combined with event-related words
+    const hasEventWord = [
+      'meeting', 'appointment', 'call', 'conference', 
+      'session', 'event', 'reminder', 'schedule'
+    ].some(word => lowerMessage.includes(word));
+    
+    if (!hasEventWord) {
+      return false;
+    }
+    
+    // Check for date patterns
+    const datePatterns = [
+      // Month/day patterns
+      /(?:on|for|next|this)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
+      /(?:on|for)\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}/i,
+      /(?:on|for)\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?/i, // MM/DD or MM/DD/YYYY
+      /(?:on|for)\s+\d{4}-\d{1,2}-\d{1,2}/i, // YYYY-MM-DD
+      /tomorrow|next week|next month/i,
+      
+      // Time patterns
+      /at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?/i,
+      /\d{1,2}(?::\d{2})?\s*(?:am|pm)/i,
+      /\d{1,2}\s+o'clock/i
+    ];
+    
+    for (const pattern of datePatterns) {
+      if (pattern.test(lowerMessage)) {
+        console.log('Detected calendar event request (date pattern):', lowerMessage);
+        return true;
+      }
+    }
+    
+    // If we get here, it doesn't look like a calendar event request
+    return false;
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!inputValue.trim() || isLoading || !user) return
@@ -239,8 +300,111 @@ export default function TwinBotChatPage() {
       
       setMessages([...updatedMessages, initialBotMessage])
 
-      // Call the AI API
-      const response = await sendMessage(userMessage.content, user.id)
+      // Check if message is a calendar event creation request
+      const isCalendarRequest = checkIfCalendarEventRequest(userMessage.content)
+      
+      let response = ""
+      
+      if (isCalendarRequest) {
+        console.log("Detected calendar event request:", userMessage.content);
+        try {
+          // Log every step for debugging
+          console.log("Creating calendar event from message:", userMessage.content);
+          console.log("User ID:", user.id);
+          console.log("Google token available:", !!localStorage.getItem('google_token'));
+          
+          // Use the new simplified approach for calendar event creation
+          const eventResult = await createSimpleCalendarEvent(userMessage.content, user.id)
+          
+          console.log("Calendar event creation response:", eventResult);
+          
+          // If we have extracted event details, include them in the response
+          if (eventResult.eventDetails) {
+            const { eventName, eventDate, eventTime } = eventResult.eventDetails
+            response = eventResult.message || `I've added "${eventName}" to your calendar on ${eventDate} at ${eventTime}.`
+            
+            // Also provide a confirmation that includes viewing the event
+            if (eventResult.event && eventResult.event.htmlLink) {
+              response += `\n\nYou can [view the event in Google Calendar](${eventResult.event.htmlLink}).`;
+            }
+          } else {
+            response = eventResult.message || "I've created that calendar event for you."
+          }
+          
+          // Debug log the successful result
+          console.log("Calendar event created successfully:", eventResult);
+        } catch (calendarError: any) {
+          console.error("Calendar event creation error:", calendarError)
+          
+          // If we have a specific message from the server, use it
+          if (calendarError.message && calendarError.message.includes('details":')){
+            try {
+              // Try to extract the message from the error
+              const errorData = JSON.parse(calendarError.message.substring(calendarError.message.indexOf('{')));
+              if (errorData.message) {
+                response = errorData.message;
+              } else {
+                response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
+              }
+            } catch (parseError) {
+              response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
+            }
+          } else if (calendarError.message?.includes('Google Calendar authentication required')) {
+            response = "I'd like to create that calendar event for you, but you need to connect to Google Calendar first. Please go to the Calendar page and connect your account.";
+          } else {
+            response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
+          }
+        }
+      } else {
+        // Normal chat response
+        response = await sendMessage(userMessage.content, user.id)
+      }
+      
+      // Check if the response contains calendar event confirmation
+      if (!isCalendarRequest && response.includes("scheduled")) {
+        console.log("AI response contains calendar event confirmation, but wasn't processed as a calendar request:", response);
+        // Try to extract event details from the AI response
+        const extractedEvent = extractEventFromAIResponse(response);
+        
+        if (extractedEvent) {
+          console.log("Extracted event details from AI response:", extractedEvent);
+          
+          try {
+            // Try to create the calendar event directly with the extracted details
+            const success = await createCalendarEventDirectly(
+              extractedEvent.title,
+              extractedEvent.date,
+              extractedEvent.time
+            );
+            
+            if (success) {
+              console.log("Successfully created calendar event directly");
+              response += `\n\nI've added this event to your calendar.`;
+            } else {
+              console.log("Failed to create calendar event directly");
+              
+              // Fall back to using the API through createSimpleCalendarEvent
+              const explicitEventMessage = `Create a calendar event titled "${extractedEvent.title}" on ${extractedEvent.date} at ${extractedEvent.time}`;
+              console.log("Falling back to createSimpleCalendarEvent with message:", explicitEventMessage);
+              
+              try {
+                const eventResult = await createSimpleCalendarEvent(explicitEventMessage, user.id);
+                console.log("Calendar event creation through fallback:", eventResult);
+                
+                if (eventResult.event && eventResult.event.htmlLink) {
+                  response += `\n\nI've added this event to your calendar. [View in Google Calendar](${eventResult.event.htmlLink})`;
+                }
+              } catch (fallbackError) {
+                console.error("Both direct and fallback calendar creation failed:", fallbackError);
+                response += "\n\n(Note: I tried to add this to your calendar but encountered an issue. Please try asking me explicitly to create this event.)";
+              }
+            }
+          } catch (error) {
+            console.error("Error in calendar event creation workflow:", error);
+            response += "\n\n(Note: I tried to add this to your calendar but encountered an issue. Please try asking me explicitly to create this event.)";
+          }
+        }
+      }
       
       // Simulate typing effect with the actual response
       simulateTyping(response, botMessageId)
@@ -348,10 +512,35 @@ export default function TwinBotChatPage() {
       )
     }
     
+    // Show calendar icon for calendar event related messages
+    const calendarPatterns = [
+      /added\s+(?:"|")(.+?)(?:"|")\s+to\s+your\s+calendar/i,
+      /created\s+(?:an\s+)?event\s+(?:"|")(.+?)(?:"|")/i, 
+      /scheduled.+?(\d{4}-\d{2}-\d{2})/i,
+      /calendar\s+event/i,
+      /view\s+(?:the\s+)?event\s+in\s+Google\s+Calendar/i,
+      /view\s+in\s+Google\s+Calendar/i
+    ];
+    
+    const isCalendarMessage = !message.isUser && (
+      calendarPatterns.some(pattern => pattern.test(message.content)) ||
+      message.content.includes("I've created an event") || 
+      message.content.includes("I'd like to create that calendar event") ||
+      message.content.includes("to your calendar on")
+    );
+    
     return (
-      <p className="whitespace-pre-wrap text-sm">
-        {formatMessageWithMarkdown(message.content)}
-      </p>
+      <div>
+        <p className="whitespace-pre-wrap text-sm">
+          {formatMessageWithMarkdown(message.content)}
+        </p>
+        {isCalendarMessage && (
+          <div className="mt-2 flex items-center text-xs text-[#3ecf8e]">
+            <Calendar className="h-3 w-3 mr-1" />
+            <span>Calendar Event</span>
+          </div>
+        )}
+      </div>
     )
   }
   
@@ -413,6 +602,146 @@ export default function TwinBotChatPage() {
       document.removeEventListener('mousedown', handleProfileClickOutside)
     }
   }, [])
+
+  // Extract event details from AI responses that contain event confirmations
+  const extractEventFromAIResponse = (message: string): { title: string, date: string, time: string } | null => {
+    // Pattern for "Team discussion scheduled: 2025-03-28, 15:00"
+    const scheduledPattern = /(.+?)\s+scheduled:\s+(\d{4}-\d{2}-\d{2}),\s+(\d{2}:\d{2})/i;
+    const scheduledMatch = message.match(scheduledPattern);
+    
+    if (scheduledMatch) {
+      return {
+        title: scheduledMatch[1].trim(),
+        date: scheduledMatch[2],
+        time: scheduledMatch[3]
+      };
+    }
+    
+    // Pattern for "I've created an event 'X' for you on <date> at <time>"
+    const createdPattern = /created\s+(?:an\s+)?event\s+(?:"|'|")(.+?)(?:"|'|")\s+.*?on\s+(\d{4}-\d{2}-\d{2}|\w+\s+\d{1,2}(?:st|nd|rd|th)?)\s+at\s+(\d{1,2}:\d{2}\s*(?:am|pm)?)/i;
+    const createdMatch = message.match(createdPattern);
+    
+    if (createdMatch) {
+      return {
+        title: createdMatch[1].trim(),
+        date: createdMatch[2],
+        time: createdMatch[3]
+      };
+    }
+    
+    // Pattern for "I've added 'X' to your calendar on <date> at <time>"
+    const addedPattern = /added\s+(?:"|'|")(.+?)(?:"|'|")\s+to\s+your\s+calendar\s+on\s+(\d{4}-\d{2}-\d{2}|\w+\s+\d{1,2}(?:st|nd|rd|th)?)\s+at\s+(\d{1,2}:\d{2}\s*(?:am|pm)?)/i;
+    const addedMatch = message.match(addedPattern);
+    
+    if (addedMatch) {
+      return {
+        title: addedMatch[1].trim(),
+        date: addedMatch[2],
+        time: addedMatch[3]
+      };
+    }
+    
+    return null;
+  };
+
+  // Create a calendar event directly using the Calendar API
+  const createCalendarEventDirectly = async (title: string, startDate: string, startTime: string): Promise<boolean> => {
+    try {
+      if (!user) return false;
+      
+      // Get the Google token
+      const googleToken = localStorage.getItem('google_token');
+      if (!googleToken) {
+        console.error("No Google token available");
+        return false;
+      }
+      
+      // Format the date and time for the Calendar API
+      // Parse the date which might be in various formats
+      let formattedDate = startDate;
+      
+      // If the date is not in YYYY-MM-DD format, try to convert it
+      if (!startDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        // Convert date like "March 28" to YYYY-MM-DD
+        try {
+          const date = new Date(startDate);
+          if (!isNaN(date.getTime())) {
+            formattedDate = date.toISOString().split('T')[0];
+          }
+        } catch (e) {
+          console.error("Failed to parse date:", startDate);
+          return false;
+        }
+      }
+      
+      // Process the time
+      let formattedTime = startTime;
+      // Handle 12-hour format with AM/PM
+      if (startTime.match(/\d{1,2}:\d{2}\s*(am|pm)/i)) {
+        const match = startTime.match(/(\d{1,2}):(\d{2})\s*(am|pm)/i);
+        if (match) {
+          let hours = parseInt(match[1]);
+          const minutes = match[2];
+          const ampm = match[3].toLowerCase();
+          
+          if (ampm === 'pm' && hours < 12) hours += 12;
+          if (ampm === 'am' && hours === 12) hours = 0;
+          
+          formattedTime = `${hours.toString().padStart(2, '0')}:${minutes}`;
+        }
+      }
+      
+      // Create start and end times (end = start + 1 hour)
+      const startDateTime = new Date(`${formattedDate}T${formattedTime}:00`);
+      const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000); // +1 hour
+      
+      console.log("Creating calendar event:", {
+        title,
+        start: startDateTime.toISOString(),
+        end: endDateTime.toISOString()
+      });
+      
+      // Use the API
+      const session = JSON.parse(localStorage.getItem('session') || '{}');
+      const token = session.access_token;
+      
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002'}/api/calendar/create-event`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Google-Token': googleToken
+        },
+        body: JSON.stringify({
+          eventDetails: {
+            summary: title,
+            description: `Created from TwinBot chat`,
+            start: {
+              dateTime: startDateTime.toISOString(),
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            },
+            end: {
+              dateTime: endDateTime.toISOString(),
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            }
+          }
+        })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        console.error("Error creating calendar event:", error);
+        return false;
+      }
+      
+      const result = await response.json();
+      console.log("Calendar event created successfully:", result);
+      return true;
+    } catch (error) {
+      console.error("Error creating calendar event directly:", error);
+      return false;
+    }
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#242123]">

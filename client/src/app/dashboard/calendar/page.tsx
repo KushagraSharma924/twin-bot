@@ -68,6 +68,98 @@ interface Event {
   isIndian?: boolean;
 }
 
+// Format event time for display
+const formatEventTime = (dateTimeStr: string) => {
+  try {
+    return format(new Date(dateTimeStr), 'h:mm a');
+  } catch (error) {
+    return '';
+  }
+}
+
+// Get color class based on event's colorId or type
+const getEventColorClass = (event: Event) => {
+  if (event.isIndian) return "bg-yellow-600";
+  if (event.isHoliday) return "bg-green-600";
+  if (event.isPublic) return "bg-teal-600";
+  
+  // Map Google Calendar color IDs to our classes
+  const colorMap: Record<string, string> = {
+    "1": "bg-[var(--supabase-accent)]", // Now teal from CSS variables
+    "2": "bg-green-600",  // Green
+    "3": "bg-purple-600", // Purple
+    "4": "bg-red-600",    // Red
+    "5": "bg-yellow-600", // Yellow
+    "6": "bg-orange-600", // Orange
+    "7": "bg-teal-600",   // Changed from blue to teal
+    "8": "bg-gray-600",   // Gray
+    "9": "bg-pink-600",   // Pink
+    "10": "bg-teal-600",  // Teal
+    "11": "bg-red-600",   // Red
+  };
+  
+  return event.colorId && colorMap[event.colorId] 
+    ? colorMap[event.colorId] 
+    : "bg-[var(--supabase-accent)]";
+}
+
+// Add this new EventList component below the Event interface definition
+const EventList = ({ events, onSelectEvent, onAddEvent, dateLabel }: { 
+  events: Event[], 
+  onSelectEvent: (event: Event) => void, 
+  onAddEvent: () => void,
+  dateLabel: string
+}) => {
+  return (
+    <div className="bg-[var(--supabase-dark-bg)] rounded-lg p-4 space-y-4 shadow-xl border border-[var(--supabase-border)] animate-in fade-in-50 slide-in-from-top-5 duration-300">
+      <div className="flex justify-between items-center border-b border-[var(--supabase-border)] pb-3">
+        <h3 className="text-xl font-medium text-white">{dateLabel}</h3>
+        <Button 
+          onClick={onAddEvent}
+          className="bg-gradient-to-r from-teal-500 to-teal-700 hover:from-teal-600 hover:to-teal-800 text-white transition-all duration-200 shadow-md hover:shadow-lg"
+          size="sm"
+        >
+          <Plus className="h-4 w-4 mr-1.5" />
+          Add Event
+        </Button>
+      </div>
+      
+      <div className="space-y-3 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+        {events.length > 0 ? (
+          events.map((event, index) => (
+            <div
+              key={event.id}
+              className={`p-3 rounded-lg cursor-pointer hover:bg-[var(--supabase-inactive)] transition-colors duration-200 border border-[var(--supabase-border)] ${getEventColorClass(event).replace('bg-', 'border-l-4 border-l-')}`}
+              onClick={() => onSelectEvent(event)}
+              style={{ animationDelay: `${index * 50}ms` }}
+            >
+              <div className="flex justify-between">
+                <p className="font-medium text-white">{event.summary}</p>
+                <Badge className={`${getEventColorClass(event)} text-white`}>{formatEventTime(event.start.dateTime)}</Badge>
+              </div>
+              <div className="mt-2 flex items-center text-sm text-gray-400">
+                <Clock className="h-4 w-4 mr-1.5" />
+                <span>{formatEventTime(event.start.dateTime)} - {formatEventTime(event.end.dateTime)}</span>
+              </div>
+              {event.location && (
+                <div className="mt-1 flex items-center text-sm text-gray-400">
+                  <MapPin className="h-4 w-4 mr-1.5" />
+                  <span className="truncate">{event.location}</span>
+                </div>
+              )}
+            </div>
+          ))
+        ) : (
+          <div className="text-center py-8">
+            <Calendar className="h-12 w-12 mx-auto text-gray-500 mb-3" />
+            <p className="text-gray-400">No events scheduled for this day</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export default function CalendarPage() {
   const router = useRouter()
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
@@ -93,6 +185,9 @@ export default function CalendarPage() {
     end: '',
     attendees: ''
   })
+  
+  // Add this state variable for event list
+  const [eventListVisible, setEventListVisible] = useState(false);
   
   useEffect(() => {
     const currentUser = getUser()
@@ -296,10 +391,19 @@ export default function CalendarPage() {
       attendees: ''
     });
     
-    // Open dialog with animation effect
-    setTimeout(() => {
+    // Get events for selected date
+    const dayEvents = getEventsForDay(date.getDate());
+    
+    // If no events, directly open add event dialog
+    if (dayEvents.length === 0) {
       setIsEventDialogOpen(true);
-    }, 50);
+    } else if (dayEvents.length === 1) {
+      // If just one event, open it directly
+      handleSelectEvent(dayEvents[0]);
+    } else {
+      // If multiple events, show the event list panel
+      setEventListVisible(true);
+    }
   }
   
   const handleSelectEvent = (event: Event) => {
@@ -648,15 +752,6 @@ export default function CalendarPage() {
     return new Date(year, month, 1).getDay();
   };
   
-  // Format event time for display
-  const formatEventTime = (dateTimeStr: string) => {
-    try {
-      return format(new Date(dateTimeStr), 'h:mm a');
-    } catch (error) {
-      return '';
-    }
-  }
-  
   // Get events for a specific day
   const getEventsForDay = (day: number) => {
     return events.filter(event => {
@@ -671,30 +766,52 @@ export default function CalendarPage() {
     });
   }
   
-  // Get color class based on event's colorId or type
-  const getEventColorClass = (event: Event) => {
-    if (event.isIndian) return "bg-yellow-600";
-    if (event.isHoliday) return "bg-green-600";
-    if (event.isPublic) return "bg-teal-600";
+  // Add function to handle opening add event form from event list
+  const handleAddEventFromList = () => {
+    setEventListVisible(false);
+    setIsEventDialogOpen(true);
+  }
+
+  // Add this function after handleAddEventFromList
+  const handleAddMoreEvent = () => {
+    // Prepare a new event at the same date as the currently viewed event
+    if (selectedEvent) {
+      const eventDate = new Date(selectedEvent.start.dateTime);
+      
+      // Format date for datetime-local input (YYYY-MM-DDThh:mm)
+      const year = eventDate.getFullYear();
+      const month = String(eventDate.getMonth() + 1).padStart(2, '0'); 
+      const day = String(eventDate.getDate()).padStart(2, '0');
+      
+      // Get current time
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      
+      // Default to current time rounded to nearest hour for start
+      const startTime = `${year}-${month}-${day}T${hours}:${minutes}`;
+      
+      // Default to 1 hour later for end time
+      const endDate = new Date(now);
+      endDate.setHours(now.getHours() + 1);
+      const endHours = String(endDate.getHours()).padStart(2, '0');
+      const endMinutes = String(endDate.getMinutes()).padStart(2, '0');
+      const endTime = `${year}-${month}-${day}T${endHours}:${endMinutes}`;
+      
+      // Reset the event form
+      setNewEvent({
+        summary: '',
+        description: '',
+        location: '',
+        start: startTime,
+        end: endTime,
+        attendees: ''
+      });
+    }
     
-    // Map Google Calendar color IDs to our classes
-    const colorMap: Record<string, string> = {
-      "1": "bg-[var(--supabase-accent)]", // Now teal from CSS variables
-      "2": "bg-green-600",  // Green
-      "3": "bg-purple-600", // Purple
-      "4": "bg-red-600",    // Red
-      "5": "bg-yellow-600", // Yellow
-      "6": "bg-orange-600", // Orange
-      "7": "bg-teal-600",   // Changed from blue to teal
-      "8": "bg-gray-600",   // Gray
-      "9": "bg-pink-600",   // Pink
-      "10": "bg-teal-600",  // Teal
-      "11": "bg-red-600",   // Red
-    };
-    
-    return event.colorId && colorMap[event.colorId] 
-      ? colorMap[event.colorId] 
-      : "bg-[var(--supabase-accent)]";
+    // Reset selected event and edit mode
+    setSelectedEvent(null);
+    setIsEditMode(false);
   }
 
   const renderCalendarDays = () => {
@@ -754,32 +871,10 @@ export default function CalendarPage() {
                   handleSelectEvent(event);
                 }}
                 className={`text-xs truncate px-2 py-1 rounded-md ${getEventColorClass(event)} text-white 
-                  hover:opacity-95 transition-all duration-200 ease-in-out shadow-md hover:shadow-lg hover:translate-x-0.5 hover:-translate-y-0.5
-                  animate-in fade-in-50 slide-in-from-left-2 group relative`}
+                  hover:opacity-95 transition-all duration-200 ease-in-out shadow-md hover:shadow-lg
+                  animate-in fade-in-50 slide-in-from-left-2`}
                 style={{ animationDelay: `${i * 100}ms` }}
               >
-                <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 flex gap-1">
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSelectEvent(event);
-                      handleEditMode();
-                    }}
-                    className="text-white/80 hover:text-white bg-black/20 hover:bg-black/40 rounded-full p-0.5"
-                  >
-                    <Edit className="h-3 w-3" />
-                  </button>
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedEvent(event);
-                      handleDeleteEvent();
-                    }}
-                    className="text-white/80 hover:text-white bg-black/20 hover:bg-black/40 rounded-full p-0.5"
-                  >
-                    <Trash className="h-3 w-3" />
-                  </button>
-                </div>
                 {formatEventTime(event.start.dateTime)} {event.summary}
               </div>
             ))}
@@ -997,7 +1092,7 @@ export default function CalendarPage() {
             </div>
           ) : (
             // Calendar with Events
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 flex flex-col overflow-hidden relative">
               {/* Day Labels */}
               <div className="grid grid-cols-7 bg-gradient-to-r from-[var(--supabase-dark-bg)] to-[color-mix(in_srgb,var(--supabase-dark-bg),transparent_5%)] shadow-md sticky top-0 z-10">
                 {DAYS.map(day => (
@@ -1025,6 +1120,23 @@ export default function CalendarPage() {
                   </div>
                 )}
               </ScrollArea>
+              
+              {/* Event List Panel (overlay) */}
+              {eventListVisible && selectedDate && (
+                <div className="absolute top-0 left-0 w-full h-full bg-black/40 flex items-center justify-center p-4 z-50 animate-in fade-in-50 duration-200" onClick={() => setEventListVisible(false)}>
+                  <div className="max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+                    <EventList 
+                      events={getEventsForDay(selectedDate.getDate())}
+                      onSelectEvent={(event) => {
+                        setEventListVisible(false);
+                        handleSelectEvent(event);
+                      }}
+                      onAddEvent={handleAddEventFromList}
+                      dateLabel={format(selectedDate, 'EEEE, MMMM d, yyyy')}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1103,7 +1215,7 @@ export default function CalendarPage() {
                             </div>
                           )}
                         </div>
-                        <div className="mt-3 flex justify-between">
+                        <div className="mt-3">
                           <div className="flex -space-x-2">
                             {event.attendees && event.attendees.slice(0, 3).map((attendee, idx) => (
                               <Avatar key={idx} className="h-6 w-6 border-2 border-[var(--supabase-dark-bg)] transition-transform duration-200 hover:scale-110 hover:z-10">
@@ -1117,28 +1229,6 @@ export default function CalendarPage() {
                                 <span className="text-xs text-gray-400">+{event.attendees.length - 3}</span>
                               </div>
                             )}
-                          </div>
-                          <div className="opacity-0 group-hover:opacity-100 transition-all duration-300 flex space-x-2">
-                            <button 
-                              className="text-teal-500 hover:text-teal-400 transition-colors duration-200 transform hover:scale-110"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSelectEvent(event);
-                                handleEditMode();
-                              }}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </button>
-                            <button 
-                              className="text-red-500 hover:text-red-400 transition-colors duration-200 transform hover:scale-110"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedEvent(event);
-                                handleDeleteEvent();
-                              }}
-                            >
-                              <Trash className="h-4 w-4" />
-                            </button>
                           </div>
                         </div>
                       </div>
@@ -1188,31 +1278,34 @@ export default function CalendarPage() {
           
           {selectedEvent && !isEditMode ? (
             // Event details view
-            <div className="space-y-4 animate-in fade-in-50 duration-300 ease-out">
-              <h2 className="text-xl font-semibold text-white">{selectedEvent.summary}</h2>
+            <div className="space-y-5 animate-in fade-in-50 duration-300 ease-out">
+              <div className="relative">
+                <div className={`absolute left-0 top-0 w-2 h-full ${getEventColorClass(selectedEvent).replace('bg-', '')} rounded-l-md`}></div>
+                <h2 className="text-xl font-semibold text-white pl-4">{selectedEvent.summary}</h2>
+              </div>
               
-              <div className="flex items-center text-gray-300">
-                <Clock className="h-5 w-5 mr-2 text-teal-500" />
+              <div className="flex items-start text-gray-300">
+                <Clock className="h-5 w-5 mr-3 text-teal-500 mt-1" />
                 <div>
-                  <div>{format(new Date(selectedEvent.start.dateTime), 'EEEE, MMMM d, yyyy')}</div>
-                  <div>{formatEventTime(selectedEvent.start.dateTime)} - {formatEventTime(selectedEvent.end.dateTime)}</div>
+                  <div className="text-white">{format(new Date(selectedEvent.start.dateTime), 'EEEE, MMMM d, yyyy')}</div>
+                  <div className="text-gray-400">{formatEventTime(selectedEvent.start.dateTime)} - {formatEventTime(selectedEvent.end.dateTime)}</div>
                 </div>
               </div>
               
               {selectedEvent.location && (
-                <div className="flex items-center text-gray-300">
-                  <MapPin className="h-5 w-5 mr-2 text-teal-500" />
-                  <span>{selectedEvent.location}</span>
+                <div className="flex items-start text-gray-300">
+                  <MapPin className="h-5 w-5 mr-3 text-teal-500 mt-0.5" />
+                  <span className="text-gray-400">{selectedEvent.location}</span>
                 </div>
               )}
               
               {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
                 <div className="space-y-2">
                   <div className="flex items-center text-gray-300">
-                    <Users className="h-5 w-5 mr-2 text-teal-500" />
-                    <span>{selectedEvent.attendees.length} Attendees</span>
+                    <Users className="h-5 w-5 mr-3 text-teal-500" />
+                    <span className="text-white">{selectedEvent.attendees.length} Attendees</span>
                   </div>
-                  <div className="ml-7 space-y-1.5">
+                  <div className="ml-8 space-y-1 bg-[var(--supabase-darker-bg)]/60 p-3 rounded-md max-h-32 overflow-y-auto">
                     {selectedEvent.attendees.map((attendee, idx) => (
                       <div key={idx} className="flex items-center text-sm text-gray-400">
                         <span>{attendee.displayName || attendee.email}</span>
@@ -1223,30 +1316,48 @@ export default function CalendarPage() {
               )}
               
               {selectedEvent.description && (
-                <div className="mt-4 bg-[var(--supabase-darker-bg)] rounded-md p-4 text-gray-300 text-sm border border-[var(--supabase-border)] shadow-inner">
-                  {selectedEvent.description}
+                <div className="mt-4 bg-[var(--supabase-darker-bg)]/60 rounded-md p-4 text-gray-300 text-sm border border-[var(--supabase-border)]/50 shadow-inner">
+                  <h4 className="text-white text-sm font-medium mb-2 flex items-center">
+                    <span className="w-1 h-4 bg-teal-500 mr-2 rounded-full"></span>
+                    Description
+                  </h4>
+                  <div className="pl-3 border-l-2 border-[var(--supabase-border)]/30">
+                    {selectedEvent.description}
+                  </div>
                 </div>
               )}
               
-              {selectedEvent.htmlLink && (
-                <div className="mt-4">
+              <div className="flex items-center justify-between mt-4 pt-3 border-t border-[var(--supabase-border)]/40">
+                {selectedEvent.htmlLink && (
                   <a 
                     href={selectedEvent.htmlLink} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    className="text-teal-500 hover:text-teal-400 hover:underline text-sm flex items-center"
+                    className="text-teal-500 hover:text-teal-400 hover:underline text-sm flex items-center bg-[var(--supabase-darker-bg)]/30 px-3 py-1.5 rounded-md transition-colors duration-200"
                   >
                     <Calendar className="h-4 w-4 mr-1.5" />
                     Open in Google Calendar
                   </a>
-                </div>
-              )}
+                )}
+                
+                <Button
+                  onClick={handleAddMoreEvent}
+                  className="bg-gradient-to-r from-teal-500 to-teal-700 hover:from-teal-600 hover:to-teal-800 text-white text-sm transition-all duration-200 shadow-md hover:shadow-lg"
+                  size="sm"
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" />
+                  Add More Event
+                </Button>
+              </div>
             </div>
           ) : (
             // Add new event form or edit form
             <div className="space-y-4 animate-in fade-in-50 duration-300 ease-out">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-300">Event Title</label>
+                <label className="text-sm font-medium text-gray-300 flex items-center">
+                  <span className="w-1 h-4 bg-teal-500 mr-2 rounded-full"></span>
+                  Event Title
+                </label>
                 <Input 
                   value={newEvent.summary}
                   onChange={(e) => setNewEvent({...newEvent, summary: e.target.value})}
@@ -1257,7 +1368,10 @@ export default function CalendarPage() {
               
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-300">Start</label>
+                  <label className="text-sm font-medium text-gray-300 flex items-center">
+                    <Clock className="h-3.5 w-3.5 mr-1.5 text-teal-500" />
+                    Start
+                  </label>
                   <Input 
                     type="datetime-local"
                     value={newEvent.start}
@@ -1266,7 +1380,10 @@ export default function CalendarPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-300">End</label>
+                  <label className="text-sm font-medium text-gray-300 flex items-center">
+                    <Clock className="h-3.5 w-3.5 mr-1.5 text-red-500" />
+                    End
+                  </label>
                   <Input 
                     type="datetime-local"
                     value={newEvent.end}
@@ -1277,7 +1394,10 @@ export default function CalendarPage() {
               </div>
               
               <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-300">Attendees (comma separated emails)</label>
+                <label className="text-sm font-medium text-gray-300 flex items-center">
+                  <Users className="h-3.5 w-3.5 mr-1.5 text-teal-500" />
+                  Attendees (comma separated emails)
+                </label>
                 <Input 
                   value={newEvent.attendees}
                   onChange={(e) => setNewEvent({...newEvent, attendees: e.target.value})}
@@ -1287,7 +1407,10 @@ export default function CalendarPage() {
               </div>
               
               <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-300">Location</label>
+                <label className="text-sm font-medium text-gray-300 flex items-center">
+                  <MapPin className="h-3.5 w-3.5 mr-1.5 text-teal-500" />
+                  Location
+                </label>
                 <Input 
                   value={newEvent.location}
                   onChange={(e) => setNewEvent({...newEvent, location: e.target.value})}
@@ -1297,7 +1420,10 @@ export default function CalendarPage() {
               </div>
               
               <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-300">Description</label>
+                <label className="text-sm font-medium text-gray-300 flex items-center">
+                  <span className="w-1 h-3.5 bg-teal-500 mr-2 rounded-full"></span>
+                  Description
+                </label>
                 <Textarea 
                   value={newEvent.description}
                   onChange={(e) => setNewEvent({...newEvent, description: e.target.value})}

@@ -78,6 +78,8 @@ export async function createCalendarEvent(tokenInfo, eventDetails) {
       tokenLength: tokenInfo?.access_token?.length
     });
     
+    console.log('Event details:', JSON.stringify(eventDetails, null, 2));
+    
     // Robust token validation
     if (!tokenInfo) {
       throw new Error('Token info object is required');
@@ -85,7 +87,7 @@ export async function createCalendarEvent(tokenInfo, eventDetails) {
     
     // Handle case where token might be a JSON string
     let accessToken = tokenInfo.access_token;
-    if (typeof accessToken === 'string' && (accessToken.startsWith('{') || accessToken.startsWith('{'))) {
+    if (typeof accessToken === 'string' && (accessToken.startsWith('{') || accessToken.startsWith('['))) {
       try {
         const parsed = JSON.parse(accessToken);
         if (parsed && parsed.token) {
@@ -103,27 +105,70 @@ export async function createCalendarEvent(tokenInfo, eventDetails) {
     }
     
     // Create OAuth client with the token
-  const oauth2Client = createOAuth2Client();
+    const oauth2Client = createOAuth2Client();
     oauth2Client.setCredentials({
       access_token: accessToken
     });
 
     console.log('OAuth client created, calling Google Calendar API');
-  const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
   
     // Validate event details
     if (!eventDetails || !eventDetails.summary || !eventDetails.start || !eventDetails.end) {
+      console.error('Invalid event details:', eventDetails);
       throw new Error('Invalid event details: summary, start, and end are required');
     }
     
-    // Attempt to create event
-    const response = await calendar.events.insert({
-    calendarId: 'primary',
-    resource: eventDetails,
-  });
+    // Make sure the event dates are valid
+    const startTime = new Date(eventDetails.start.dateTime);
+    const endTime = new Date(eventDetails.end.dateTime);
     
-    console.log('Event created successfully:', response.data.id);
-    return response;
+    if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+      console.error('Invalid date format in event:', {
+        start: eventDetails.start.dateTime,
+        end: eventDetails.end.dateTime,
+        startValid: !isNaN(new Date(eventDetails.start.dateTime).getTime()),
+        endValid: !isNaN(new Date(eventDetails.end.dateTime).getTime())
+      });
+      throw new Error('Invalid date format in event details');
+    }
+    
+    // Create a clean event object to avoid any extraneous properties
+    const cleanEventDetails = {
+      summary: eventDetails.summary,
+      description: eventDetails.description || '',
+      location: eventDetails.location || '',
+      start: {
+        dateTime: startTime.toISOString(),
+        timeZone: eventDetails.start.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone
+      },
+      end: {
+        dateTime: endTime.toISOString(),
+        timeZone: eventDetails.end.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone
+      }
+    };
+    
+    // If there are attendees, include them
+    if (eventDetails.attendees && Array.isArray(eventDetails.attendees) && eventDetails.attendees.length > 0) {
+      cleanEventDetails.attendees = eventDetails.attendees;
+    }
+    
+    console.log('Sending clean event object to Google:', JSON.stringify(cleanEventDetails));
+    
+    // Attempt to create event
+    try {
+      const response = await calendar.events.insert({
+        calendarId: 'primary',
+        resource: cleanEventDetails,
+      });
+      
+      console.log('Event created successfully:', response.data.id);
+      return response;
+    } catch (apiError) {
+      console.error('Google Calendar API error:', apiError);
+      console.error('Error details:', apiError.response?.data || 'No additional details');
+      throw apiError;
+    }
   } catch (error) {
     console.error('Error creating calendar event:', error);
     // Check for auth errors to provide better error messages

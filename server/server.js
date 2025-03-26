@@ -30,7 +30,12 @@ app.use('/api/auth', authRoutes);
 app.use('/api/email', emailMiddleware, emailRoutes);
 app.use('/api/ai', authMiddleware, aiRoutes);
 app.use('/api/calendar', authMiddleware, calendarRoutes);
-app.use('/api/twin', authMiddleware);
+// Use the AI routes for twin functionality
+app.use('/api/twin', authMiddleware, (req, res, next) => {
+  // Rewrite the URL path to use our AI endpoints
+  req.url = '/twin' + req.url;
+  next();
+}, aiRoutes);
 app.use('/api/browser', authMiddleware);
 app.use('/api/user', authMiddleware);
 app.use('/api/admin', adminMiddleware);
