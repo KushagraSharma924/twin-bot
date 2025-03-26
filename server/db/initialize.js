@@ -7,6 +7,12 @@ export async function ensureTables() {
   try {
     console.log('Checking and initializing database tables...');
     
+    // Check if Supabase client is available
+    if (!supabase) {
+      console.warn('Supabase client is not initialized. Skipping database initialization.');
+      return;
+    }
+    
     // Verify and create OAuth state table
     await ensureOAuthStateTable();
     

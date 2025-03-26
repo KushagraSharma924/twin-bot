@@ -269,11 +269,54 @@ export const updateProfile = async (req, res) => {
   }
 };
 
+/**
+ * Refresh an authentication token
+ */
+export const refreshToken = async (req, res) => {
+  try {
+    const { refresh_token } = req.body;
+    
+    if (!refresh_token) {
+      return res.status(400).json({ error: "Refresh token is required" });
+    }
+    
+    if (!supabase) {
+      console.error('Supabase client is not initialized');
+      return res.status(500).json({ error: "Authentication service unavailable" });
+    }
+    
+    const { data, error } = await supabase.auth.refreshSession({
+      refresh_token: refresh_token
+    });
+    
+    if (error) {
+      console.error('Token refresh error:', error.message);
+      return res.status(401).json({ error: error.message });
+    }
+    
+    if (!data.session || !data.session.access_token) {
+      return res.status(401).json({ error: "Invalid refresh token" });
+    }
+    
+    // Return the new session data
+    res.json({
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token
+      }
+    });
+  } catch (error) {
+    console.error('Token refresh exception:', error.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 export default {
   login,
   register,
   deleteUsers,
   getProfile,
   updateProfile,
-  getUsernameFromEmail
+  getUsernameFromEmail,
+  refreshToken
 };

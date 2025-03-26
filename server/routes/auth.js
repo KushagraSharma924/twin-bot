@@ -142,6 +142,12 @@ router.get('/profile', authController.getProfile);
 router.post('/profile', authController.updateProfile);
 
 /**
+ * Refresh access token
+ * POST /api/auth/refresh
+ */
+router.post('/refresh', authController.refreshToken);
+
+/**
  * Delete a user (admin only)
  * DELETE /api/auth/admin/users/:userId
  */

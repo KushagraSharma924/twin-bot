@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import Sidebar from "@/components/sidebar"
-import { getUser, logout, getGoogleToken, clearGoogleToken, getGoogleAuthUrl, fetchCalendarEvents, createCalendarEvent, CalendarEvent } from "@/lib/api"
+import { getUser, logout, getGoogleToken, clearGoogleToken, getGoogleAuthUrl, fetchCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, CalendarEvent, getSession } from "@/lib/api"
 import { toast } from "sonner"
 import {
   Bell,
@@ -84,6 +84,7 @@ export default function CalendarPage() {
   const [isEventDialogOpen, setIsEventDialogOpen] = useState(false)
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
+  const [isEditMode, setIsEditMode] = useState(false)
   const [newEvent, setNewEvent] = useState({
     summary: '',
     description: '',
@@ -266,22 +267,45 @@ export default function CalendarPage() {
   }
   
   const handleSelectDate = (date: Date) => {
-    setSelectedDate(date)
-    setSelectedEvent(null)
+    setSelectedDate(date);
+    setSelectedEvent(null);
+    
+    // Format date for datetime-local input (YYYY-MM-DDThh:mm)
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0'); 
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    
+    // Default to current time rounded to nearest hour for start
+    const startTime = `${year}-${month}-${day}T${hours}:${minutes}`;
+    
+    // Default to 1 hour later for end time
+    const endDate = new Date(date);
+    endDate.setHours(date.getHours() + 1);
+    const endHours = String(endDate.getHours()).padStart(2, '0');
+    const endMinutes = String(endDate.getMinutes()).padStart(2, '0');
+    const endTime = `${year}-${month}-${day}T${endHours}:${endMinutes}`;
+    
     setNewEvent({
       summary: '',
       description: '',
       location: '',
-      start: `${format(date, 'yyyy-MM-dd')}T09:00`,
-      end: `${format(date, 'yyyy-MM-dd')}T10:00`,
+      start: startTime,
+      end: endTime,
       attendees: ''
-    })
-    setIsEventDialogOpen(true)
+    });
+    
+    // Open dialog with animation effect
+    setTimeout(() => {
+      setIsEventDialogOpen(true);
+    }, 50);
   }
   
   const handleSelectEvent = (event: Event) => {
     setSelectedEvent(event)
     setSelectedDate(new Date(event.start.dateTime))
+    setIsEditMode(false)  // Reset edit mode when selecting an event
     setIsEventDialogOpen(true)
   }
   
@@ -291,13 +315,54 @@ export default function CalendarPage() {
       return
     }
     
+    // First check for user session
+    const session = getSession();
+    if (!session || !session.access_token) {
+      toast.error("Your session has expired. Please log in again");
+      router.push('/login');
+      return;
+    }
+    
+    // Then check Google authentication
+    const googleToken = getGoogleToken();
+    if (!googleToken) {
+      toast.error("Google Calendar authentication required");
+      setIsEventDialogOpen(false);
+      
+      // Show reconnection prompt
+      setTimeout(() => {
+        if (confirm("You need to connect to Google Calendar. Connect now?")) {
+          connectToGoogle();
+        } else {
+          setIsGoogleConnected(false);
+        }
+      }, 500);
+      return;
+    }
+    
     try {
-      setIsLoading(true)
+      setIsLoading(true);
+      
+      // Validate dates
+      const startDate = new Date(newEvent.start);
+      const endDate = new Date(newEvent.end);
+      
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        toast.error("Invalid date format");
+        setIsLoading(false);
+        return;
+      }
+      
+      if (endDate <= startDate) {
+        toast.error("End time must be after start time");
+        setIsLoading(false);
+        return;
+      }
       
       // Parse attendees
       const attendeesArray = newEvent.attendees
         ? newEvent.attendees.split(',').map(email => ({ email: email.trim() }))
-        : []
+        : [];
       
       // Create event payload
       const eventPayload: Partial<CalendarEvent> = {
@@ -305,24 +370,256 @@ export default function CalendarPage() {
         description: newEvent.description,
         location: newEvent.location,
         start: {
-          dateTime: newEvent.start,
+          dateTime: new Date(newEvent.start).toISOString(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
         },
         end: {
-          dateTime: newEvent.end,
+          dateTime: new Date(newEvent.end).toISOString(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
         },
         attendees: attendeesArray,
+      };
+      
+      // Debug log
+      console.log("Creating event with payload:", eventPayload);
+      
+      await createCalendarEvent(eventPayload);
+      
+      toast.success("Event created successfully");
+      setIsEventDialogOpen(false);
+      fetchEvents();
+    } catch (error: any) {
+      console.error("Error creating event:", error);
+      
+      // Detect specific error types
+      if (error.message && error.message.includes('Server connection error')) {
+        toast.error("Server connection error. Please make sure the server is running.");
+      } else if (error.message && error.message.includes('Authentication session required')) {
+        toast.error("Session expired. Please log in again");
+        logout();
+        router.push('/login');
+      } else if (error.message && error.message.includes('Google Calendar authentication')) {
+        toast.error("Google Calendar authentication required");
+        setIsEventDialogOpen(false);
+        setIsGoogleConnected(false);
+        
+        // Prompt to reconnect
+        setTimeout(() => {
+          if (confirm("You need to reconnect to Google Calendar. Reconnect now?")) {
+            reconnectToGoogle();
+          }
+        }, 500);
+      } else if (error.message && error.message.includes('Access token is required')) {
+        toast.error("Google Calendar token is missing. Reconnecting to Google...");
+        setIsEventDialogOpen(false);
+        setIsGoogleConnected(false);
+        
+        // Clear token and prompt to reconnect
+        clearGoogleToken();
+        setTimeout(() => {
+          if (confirm("We need to reconnect your Google Calendar. Reconnect now?")) {
+            reconnectToGoogle();
+          }
+        }, 500);
+      } else {
+        toast.error(error.message || "Failed to create event");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }
+  
+  // Enable edit mode for the current event
+  const handleEditMode = () => {
+    if (!selectedEvent) return;
+    
+    // Format date for datetime-local input (YYYY-MM-DDThh:mm)
+    const startDate = new Date(selectedEvent.start.dateTime);
+    const endDate = new Date(selectedEvent.end.dateTime);
+    
+    // Format dates properly
+    const formatDateForInput = (date: Date) => {
+      return date.toISOString().slice(0, 16); // Format: YYYY-MM-DDThh:mm
+    };
+    
+    // Prepare attendees string from array
+    const attendeesString = selectedEvent.attendees 
+      ? selectedEvent.attendees.map(a => a.email).join(', ')
+      : '';
+    
+    // Set up the form with event data
+    setNewEvent({
+      summary: selectedEvent.summary,
+      description: selectedEvent.description || '',
+      location: selectedEvent.location || '',
+      start: formatDateForInput(startDate),
+      end: formatDateForInput(endDate),
+      attendees: attendeesString
+    });
+    
+    setIsEditMode(true);
+  }
+  
+  // Handle updating an event
+  const handleUpdateEvent = async () => {
+    if (!selectedEvent || !isEditMode) {
+      toast.error("No event selected for editing");
+      return;
+    }
+    
+    // First check for user session
+    const session = getSession();
+    if (!session || !session.access_token) {
+      toast.error("Your session has expired. Please log in again");
+      router.push('/login');
+      return;
+    }
+    
+    // Then check Google authentication
+    const googleToken = getGoogleToken();
+    if (!googleToken) {
+      toast.error("Google Calendar authentication required");
+      setIsEventDialogOpen(false);
+      
+      // Show reconnection prompt
+      setTimeout(() => {
+        if (confirm("You need to connect to Google Calendar. Connect now?")) {
+          connectToGoogle();
+        } else {
+          setIsGoogleConnected(false);
+        }
+      }, 500);
+      return;
+    }
+    
+    try {
+      setIsLoading(true);
+      
+      // Validate dates
+      const startDate = new Date(newEvent.start);
+      const endDate = new Date(newEvent.end);
+      
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        toast.error("Invalid date format");
+        setIsLoading(false);
+        return;
       }
       
-      await createCalendarEvent(eventPayload)
+      if (endDate <= startDate) {
+        toast.error("End time must be after start time");
+        setIsLoading(false);
+        return;
+      }
       
-      toast.success("Event created successfully")
-      setIsEventDialogOpen(false)
-      fetchEvents()
+      // Parse attendees
+      const attendeesArray = newEvent.attendees
+        ? newEvent.attendees.split(',').map(email => ({ email: email.trim() }))
+        : [];
+      
+      // Create event payload
+      const eventPayload: Partial<CalendarEvent> = {
+        summary: newEvent.summary,
+        description: newEvent.description,
+        location: newEvent.location,
+        start: {
+          dateTime: new Date(newEvent.start).toISOString(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        },
+        end: {
+          dateTime: new Date(newEvent.end).toISOString(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        },
+        attendees: attendeesArray,
+      };
+      
+      // Debug log
+      console.log("Updating event with payload:", eventPayload);
+      
+      // Update the event
+      await updateCalendarEvent(selectedEvent.id, eventPayload);
+      
+      toast.success("Event updated successfully");
+      setIsEventDialogOpen(false);
+      setIsEditMode(false);
+      fetchEvents();
     } catch (error: any) {
-      console.error("Error creating event:", error)
-      toast.error(error.message || "Failed to create event")
+      console.error("Error updating event:", error);
+      
+      // Detect specific error types
+      if (error.message && error.message.includes('Server connection error')) {
+        toast.error("Server connection error. Please make sure the server is running.");
+      } else if (error.message && error.message.includes('Authentication session required')) {
+        toast.error("Session expired. Please log in again");
+        logout();
+        router.push('/login');
+      } else if (error.message && error.message.includes('Google Calendar authentication')) {
+        toast.error("Google Calendar authentication required");
+        setIsEventDialogOpen(false);
+        setIsGoogleConnected(false);
+        
+        // Prompt to reconnect
+        setTimeout(() => {
+          if (confirm("You need to reconnect to Google Calendar. Reconnect now?")) {
+            reconnectToGoogle();
+          }
+        }, 500);
+      } else {
+        toast.error(error.message || "Failed to update event");
+      }
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
+    }
+  }
+
+  // Handle deleting an event
+  const handleDeleteEvent = async () => {
+    if (!selectedEvent) {
+      toast.error("No event selected");
+      return;
+    }
+
+    // Confirm deletion
+    if (!confirm(`Are you sure you want to delete "${selectedEvent.summary}"?`)) {
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      
+      // Delete event
+      await deleteCalendarEvent(selectedEvent.id);
+      
+      toast.success("Event deleted successfully");
+      setIsEventDialogOpen(false);
+      
+      // Refresh events
+      fetchEvents();
+    } catch (error: any) {
+      console.error("Error deleting event:", error);
+      
+      // Detect specific error types
+      if (error.message && error.message.includes('Server connection error')) {
+        toast.error("Server connection error. Please make sure the server is running.");
+      } else if (error.message && error.message.includes('Authentication session required')) {
+        toast.error("Session expired. Please log in again");
+        logout();
+        router.push('/login');
+      } else if (error.message && error.message.includes('Google Calendar authentication')) {
+        toast.error("Google Calendar authentication required");
+        setIsEventDialogOpen(false);
+        setIsGoogleConnected(false);
+        
+        // Prompt to reconnect
+        setTimeout(() => {
+          if (confirm("You need to reconnect to Google Calendar. Reconnect now?")) {
+            reconnectToGoogle();
+          }
+        }, 500);
+      } else {
+        toast.error(error.message || "Failed to delete event");
+      }
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -378,17 +675,17 @@ export default function CalendarPage() {
   const getEventColorClass = (event: Event) => {
     if (event.isIndian) return "bg-yellow-600";
     if (event.isHoliday) return "bg-green-600";
-    if (event.isPublic) return "bg-blue-600";
+    if (event.isPublic) return "bg-teal-600";
     
     // Map Google Calendar color IDs to our classes
     const colorMap: Record<string, string> = {
-      "1": "bg-[var(--supabase-accent)]", // Default blue
+      "1": "bg-[var(--supabase-accent)]", // Now teal from CSS variables
       "2": "bg-green-600",  // Green
       "3": "bg-purple-600", // Purple
       "4": "bg-red-600",    // Red
       "5": "bg-yellow-600", // Yellow
       "6": "bg-orange-600", // Orange
-      "7": "bg-blue-600",   // Blue
+      "7": "bg-teal-600",   // Changed from blue to teal
       "8": "bg-gray-600",   // Gray
       "9": "bg-pink-600",   // Pink
       "10": "bg-teal-600",  // Teal
@@ -411,7 +708,7 @@ export default function CalendarPage() {
       days.push(
         <div 
           key={`empty-${i}`} 
-          className="h-28 border border-[var(--supabase-border)] bg-[var(--supabase-dark-bg)] transition-all duration-300 ease-in-out"
+          className="h-28 border border-[var(--supabase-border)] bg-[var(--supabase-dark-bg)]/70 transition-all duration-300 ease-in-out rounded-md m-0.5"
         ></div>
       );
     }
@@ -426,27 +723,30 @@ export default function CalendarPage() {
         <div 
           key={day} 
           onClick={() => handleSelectDate(date)}
-          className={`h-28 border border-[var(--supabase-border)] 
-            ${isCurrentToday ? 'bg-gradient-to-br from-[var(--supabase-dark-bg)] to-[var(--supabase-inactive)]' : 'bg-[var(--supabase-dark-bg)]'} 
-            p-2 overflow-hidden cursor-pointer hover:bg-[var(--supabase-light-bg)] 
-            transition-all duration-200 ease-in-out transform hover:shadow-lg hover:scale-[1.02] hover:z-10 relative`}
+          className={`h-28 border ${isCurrentToday ? 'border-teal-500 border-2' : 'border-[var(--supabase-border)]'} 
+            ${isCurrentToday 
+              ? 'bg-gradient-to-br from-[var(--supabase-dark-bg)] via-[#1e1e2a] to-[var(--supabase-inactive)]' 
+              : 'bg-[var(--supabase-dark-bg)]/70'} 
+            p-2 overflow-hidden cursor-pointer hover:bg-[var(--supabase-light-bg)]/90 
+            transition-all duration-300 ease-in-out transform hover:shadow-xl hover:scale-[1.03] hover:z-20 relative rounded-md m-0.5
+            ${dayEvents.length > 0 ? 'shadow-md' : ''}`}
         >
           <div className="flex justify-between items-center">
             <span className={`text-sm font-medium transition-all duration-300 ease-in-out
               ${isCurrentToday 
-                ? 'bg-gradient-to-r from-[var(--supabase-accent)] to-blue-500 text-white h-7 w-7 rounded-full flex items-center justify-center shadow-md' 
+                ? 'bg-gradient-to-r from-teal-500 to-teal-700 text-white h-7 w-7 rounded-full flex items-center justify-center shadow-lg ring-2 ring-teal-500/30' 
                 : 'text-gray-300 hover:text-white'}`}
             >
               {day}
             </span>
             {dayEvents.length > 0 && (
-              <Badge className="bg-gradient-to-r from-[var(--supabase-accent)]/30 to-[var(--supabase-accent)]/50 text-white text-xs transition-all duration-300 ease-in-out shadow-sm">
+              <Badge className="bg-gradient-to-r from-teal-500/30 to-teal-700/30 text-white text-xs transition-all duration-300 ease-in-out shadow-sm">
                 {dayEvents.length}
               </Badge>
             )}
           </div>
           <div className="mt-2 space-y-1.5">
-            {dayEvents.slice(0, 2).map(event => (
+            {dayEvents.slice(0, 2).map((event, i) => (
               <div 
                 key={event.id} 
                 onClick={(e) => {
@@ -454,14 +754,39 @@ export default function CalendarPage() {
                   handleSelectEvent(event);
                 }}
                 className={`text-xs truncate px-2 py-1 rounded-md ${getEventColorClass(event)} text-white 
-                  hover:opacity-80 transition-all duration-200 ease-in-out shadow-sm hover:shadow-md hover:translate-x-0.5 hover:-translate-y-0.5`}
+                  hover:opacity-95 transition-all duration-200 ease-in-out shadow-md hover:shadow-lg hover:translate-x-0.5 hover:-translate-y-0.5
+                  animate-in fade-in-50 slide-in-from-left-2 group relative`}
+                style={{ animationDelay: `${i * 100}ms` }}
               >
+                <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 flex gap-1">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectEvent(event);
+                      handleEditMode();
+                    }}
+                    className="text-white/80 hover:text-white bg-black/20 hover:bg-black/40 rounded-full p-0.5"
+                  >
+                    <Edit className="h-3 w-3" />
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedEvent(event);
+                      handleDeleteEvent();
+                    }}
+                    className="text-white/80 hover:text-white bg-black/20 hover:bg-black/40 rounded-full p-0.5"
+                  >
+                    <Trash className="h-3 w-3" />
+                  </button>
+                </div>
                 {formatEventTime(event.start.dateTime)} {event.summary}
               </div>
             ))}
             {dayEvents.length > 2 && (
-              <div className="text-xs text-gray-400 hover:text-gray-300 transition-colors duration-200 ease-in-out font-medium pl-1">
-                +{dayEvents.length - 2} more
+              <div className="text-xs text-gray-400 hover:text-white transition-colors duration-200 ease-in-out font-medium pl-1 flex items-center group">
+                <Plus className="h-3 w-3 mr-1 text-teal-500 group-hover:rotate-90 transition-transform duration-200" />
+                <span>{dayEvents.length - 2} more</span>
               </div>
             )}
           </div>
@@ -490,15 +815,30 @@ export default function CalendarPage() {
     }
   };
 
+  // This will ensure user is always redirected to auth when needed
+  useEffect(() => {
+    const checkGoogleAuth = async () => {
+      const token = getGoogleToken()
+      
+      // If not connected and we need to show the calendar, prompt for connection
+      if (!token && isGoogleConnected) {
+        setIsGoogleConnected(false)
+        toast.error("Google Calendar authentication required")
+      }
+    }
+    
+    checkGoogleAuth()
+  }, [isGoogleConnected])
+
   return (
     <div className="flex h-screen bg-[var(--supabase-dark-bg)]">
       {/* Sidebar */}
       <Sidebar activePage="calendar" />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-[var(--supabase-darker-bg)] to-[var(--supabase-dark-bg)]">
+      <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-[var(--supabase-darker-bg)] via-[#1a1a22] to-[var(--supabase-dark-bg)]">
         {/* Header */}
-        <header className="bg-gradient-to-r from-[var(--supabase-darker-bg)] to-[var(--supabase-darker-bg)]/90 border-b border-[var(--supabase-border)] h-16 flex items-center px-6 shadow-sm">
+        <header className="bg-gradient-to-r from-[var(--supabase-darker-bg)] to-[color-mix(in_srgb,var(--supabase-darker-bg),transparent_10%)] border-b border-[var(--supabase-border)] h-16 flex items-center px-6 shadow-md">
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
             className="md:hidden mr-2 text-gray-300 hover:text-white hover:bg-[var(--supabase-inactive)] p-2 rounded-md"
@@ -506,18 +846,18 @@ export default function CalendarPage() {
             <Menu className="h-5 w-5" />
           </button>
           <div className="flex-1 flex items-center">
-            <h1 className="text-xl font-bold text-white">Calendar</h1>
+            <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400">Calendar</h1>
             <div className="ml-6 flex items-center space-x-2">
               <button 
                 onClick={goToPreviousMonth}
-                className="text-gray-300 hover:text-white p-1.5 rounded-md hover:bg-[var(--supabase-inactive)] transition-all duration-200 transform hover:scale-105"
+                className="text-gray-300 hover:text-white p-2 rounded-md hover:bg-[var(--supabase-inactive)] transition-all duration-200 transform hover:scale-105 active:scale-95"
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
               <span className="text-white font-medium px-2">{MONTHS[currentMonth]} {currentYear}</span>
               <button 
                 onClick={goToNextMonth}
-                className="text-gray-300 hover:text-white p-1.5 rounded-md hover:bg-[var(--supabase-inactive)] transition-all duration-200 transform hover:scale-105"
+                className="text-gray-300 hover:text-white p-2 rounded-md hover:bg-[var(--supabase-inactive)] transition-all duration-200 transform hover:scale-105 active:scale-95"
               >
                 <ChevronRight className="h-5 w-5" />
               </button>
@@ -531,7 +871,7 @@ export default function CalendarPage() {
               ) : (
                 <button 
                   onClick={() => handleSelectDate(new Date())}
-                  className="bg-gradient-to-r from-[var(--supabase-accent)] to-blue-500 text-white px-4 py-1.5 rounded-md hover:from-[var(--supabase-accent-hover)] hover:to-blue-600 flex items-center transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105"
+                  className="bg-gradient-to-r from-teal-500 to-teal-700 text-white px-4 py-1.5 rounded-md hover:from-teal-600 hover:to-teal-800 flex items-center transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95"
                 >
                   <Plus className="h-4 w-4 mr-1.5" />
                   <span>New Event</span>
@@ -547,11 +887,11 @@ export default function CalendarPage() {
             <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-500" />
           </div>
           <div className="flex items-center space-x-4 ml-4">
-            <button className="relative text-gray-300 hover:text-white hover:bg-[var(--supabase-inactive)] p-2 rounded-md transition-all duration-200 transform hover:scale-105">
+            <button className="relative text-gray-300 hover:text-white hover:bg-[var(--supabase-inactive)] p-2 rounded-md transition-all duration-200 transform hover:scale-105 active:scale-95">
               <Bell className="h-5 w-5" />
-              <span className="absolute top-1 right-1 h-2 w-2 bg-[var(--supabase-accent)] rounded-full animate-pulse"></span>
+              <span className="absolute top-1 right-1 h-2 w-2 bg-[var(--supabase-accent)] rounded-full animate-pulse shadow-[0_0_5px_var(--supabase-accent)]"></span>
             </button>
-            <Link href="/dashboard/twinbot" className="text-gray-300 hover:text-white hover:bg-[var(--supabase-inactive)] p-2 rounded-md block transition-all duration-200 transform hover:scale-105">
+            <Link href="/dashboard/twinbot" className="text-gray-300 hover:text-white hover:bg-[var(--supabase-inactive)] p-2 rounded-md block transition-all duration-200 transform hover:scale-105 active:scale-95">
               <MessageSquare className="h-5 w-5" />
             </Link>
             <div className="relative" ref={profileRef}>
@@ -567,7 +907,7 @@ export default function CalendarPage() {
               </button>
               
               {isProfileOpen && (
-                <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-[var(--supabase-dark-bg)] ring-1 ring-black ring-opacity-5 z-50 transition-all duration-200 ease-in-out animate-in fade-in-50 slide-in-from-top-5">
+                <div className="absolute right-0 mt-2 w-48 rounded-lg shadow-xl py-1 bg-[var(--supabase-dark-bg)]/95 backdrop-blur-sm ring-1 ring-[var(--supabase-border)] z-50 transition-all duration-300 ease-in-out animate-in fade-in-50 slide-in-from-top-5">
                   <div className="px-4 py-2 border-b border-[var(--supabase-border)]">
                     <p className="text-sm font-medium text-white">{user?.name || 'User'}</p>
                     <p className="text-xs text-gray-400">{user?.email || ''}</p>
@@ -603,10 +943,14 @@ export default function CalendarPage() {
         <div className="flex-1 flex overflow-hidden bg-[var(--supabase-light-bg)]">
           {!isGoogleConnected ? (
             // Google Calendar not connected view
-            <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-br from-[var(--supabase-darker-bg)] to-[var(--supabase-dark-bg)]">
-              <div className="max-w-md text-center bg-gradient-to-b from-[var(--supabase-light-bg)] to-[var(--supabase-light-bg)]/90 p-8 rounded-xl shadow-xl border border-[var(--supabase-border)] transform transition-all duration-500 hover:scale-105">
-                <div className="h-20 w-20 bg-gradient-to-br from-blue-500/20 to-[var(--supabase-accent)]/20 rounded-full mx-auto mb-6 flex items-center justify-center">
-                  <Calendar className="h-10 w-10 text-[var(--supabase-accent)]" />
+            <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-br from-[var(--supabase-darker-bg)] via-[#181820] to-[var(--supabase-dark-bg)]">
+              <div className="max-w-md text-center bg-gradient-to-b from-[var(--supabase-light-bg)] to-[color-mix(in_srgb,var(--supabase-light-bg),transparent_5%)] p-8 rounded-xl shadow-2xl border border-[var(--supabase-border)] transform transition-all duration-500 hover:scale-105 backdrop-blur-sm">
+                <div className="relative h-24 w-24 mx-auto mb-6">
+                  <div className="absolute inset-0 bg-gradient-to-br from-teal-500/20 to-teal-700/20 rounded-full animate-pulse" style={{ animationDuration: '3s' }}></div>
+                  <div className="absolute inset-2 bg-gradient-to-br from-teal-500/30 to-teal-700/30 rounded-full animate-pulse" style={{ animationDuration: '2s' }}></div>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Calendar className="h-12 w-12 text-teal-500" />
+                  </div>
                 </div>
                 <h2 className="text-2xl font-bold text-white mb-4 bg-gradient-to-r from-white to-gray-300 text-transparent bg-clip-text">Connect to Google Calendar</h2>
                 <p className="text-gray-400 mb-6 leading-relaxed">
@@ -615,7 +959,7 @@ export default function CalendarPage() {
                 <div className="space-y-4">
                   <Button
                     onClick={connectToGoogle}
-                    className="w-full bg-gradient-to-r from-[var(--supabase-accent)] to-blue-500 hover:from-[var(--supabase-accent-hover)] hover:to-blue-600 text-white transition-all duration-300 shadow-md hover:shadow-lg transform hover:translate-y-[-2px]"
+                    className="w-full bg-gradient-to-r from-teal-500 to-teal-700 hover:from-teal-600 hover:to-teal-800 text-white transition-all duration-300 shadow-lg hover:shadow-xl transform hover:translate-y-[-2px] active:translate-y-0 active:shadow-md"
                     disabled={isLoading}
                   >
                     {isLoading ? (
@@ -630,7 +974,7 @@ export default function CalendarPage() {
                   
                   <Button
                     onClick={reconnectToGoogle}
-                    className="w-full bg-[var(--supabase-inactive)] hover:bg-gray-600 text-white transition-all duration-200 shadow-sm hover:shadow-md"
+                    className="w-full bg-[var(--supabase-inactive)] hover:bg-gray-600 text-white transition-all duration-200 shadow-md hover:shadow-lg"
                     disabled={isLoading}
                   >
                     {isLoading ? (
@@ -655,7 +999,7 @@ export default function CalendarPage() {
             // Calendar with Events
             <div className="flex-1 flex flex-col overflow-hidden">
               {/* Day Labels */}
-              <div className="grid grid-cols-7 bg-gradient-to-r from-[var(--supabase-dark-bg)] to-[var(--supabase-dark-bg)]/95 shadow-sm">
+              <div className="grid grid-cols-7 bg-gradient-to-r from-[var(--supabase-dark-bg)] to-[color-mix(in_srgb,var(--supabase-dark-bg),transparent_5%)] shadow-md sticky top-0 z-10">
                 {DAYS.map(day => (
                   <div key={day} className="py-3 text-center text-sm font-medium text-gray-400">
                     {day}
@@ -664,16 +1008,19 @@ export default function CalendarPage() {
               </div>
               
               {/* Calendar Grid */}
-              <ScrollArea className="flex-1">
+              <ScrollArea className="flex-1 custom-scrollbar">
                 {isLoading ? (
                   <div className="flex items-center justify-center h-full w-full">
-                    <div className="bg-[var(--supabase-darker-bg)]/50 p-6 rounded-xl shadow-lg flex flex-col items-center">
-                      <Loader2 className="h-10 w-10 animate-spin text-[var(--supabase-accent)] mb-4" />
-                      <span className="text-gray-400">Loading your calendar events...</span>
+                    <div className="bg-[var(--supabase-darker-bg)]/80 p-8 rounded-xl shadow-2xl flex flex-col items-center backdrop-blur-sm">
+                      <div className="relative h-16 w-16 mb-4">
+                        <div className="absolute inset-0 rounded-full bg-[var(--supabase-accent)]/10 animate-ping" style={{animationDuration: '1.5s'}}></div>
+                        <Loader2 className="h-16 w-16 animate-spin text-[var(--supabase-accent)]" />
+                      </div>
+                      <span className="text-gray-300 text-lg">Loading your calendar events...</span>
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-7 auto-rows-min p-1 bg-gradient-to-br from-[var(--supabase-light-bg)] to-[var(--supabase-light-bg)]/90">
+                  <div className="grid grid-cols-7 auto-rows-min p-1 bg-gradient-to-br from-[color-mix(in_srgb,var(--supabase-light-bg),black_5%)] to-[var(--supabase-light-bg)]/95">
                     {renderCalendarDays()}
                   </div>
                 )}
@@ -682,26 +1029,26 @@ export default function CalendarPage() {
           )}
 
           {/* Event Details Panel */}
-          <div className="w-80 border-l border-[var(--supabase-border)] bg-gradient-to-b from-[var(--supabase-dark-bg)] to-[var(--supabase-darker-bg)] hidden md:block overflow-hidden">
-            <div className="p-4 border-b border-[var(--supabase-border)] flex items-center justify-between bg-[var(--supabase-darker-bg)]/50">
+          <div className="w-80 border-l border-[var(--supabase-border)] bg-gradient-to-b from-[var(--supabase-dark-bg)] via-[#181820] to-[var(--supabase-darker-bg)] hidden md:block overflow-hidden">
+            <div className="p-4 border-b border-[var(--supabase-border)] flex items-center justify-between bg-[var(--supabase-darker-bg)]/80 backdrop-blur-sm shadow-md">
               <div>
-                <h3 className="text-lg font-medium text-white">Today's Events</h3>
+                <h3 className="text-lg font-medium text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300">Today's Events</h3>
                 <p className="text-sm text-gray-400">{MONTHS[today.getMonth()]} {today.getDate()}, {today.getFullYear()}</p>
               </div>
               {isGoogleConnected && (
                 <Button 
                   onClick={() => handleSelectDate(new Date())} 
                   size="sm" 
-                  className="bg-gradient-to-r from-[var(--supabase-accent)] to-blue-500 hover:from-[var(--supabase-accent-hover)] hover:to-blue-600 text-white transition-all duration-200 shadow-sm hover:shadow-md"
+                  className="bg-gradient-to-r from-teal-500 to-teal-700 text-white transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95"
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
               )}
             </div>
-            <ScrollArea className="h-full">
+            <ScrollArea className="h-full custom-scrollbar">
               {isLoading ? (
                 <div className="flex items-center justify-center h-32 w-full">
-                  <Loader2 className="h-6 w-6 animate-spin text-[var(--supabase-accent)]" />
+                  <Loader2 className="h-8 w-8 animate-spin text-[var(--supabase-accent)]" />
                 </div>
               ) : (
                 <div className="p-4 space-y-4">
@@ -720,7 +1067,7 @@ export default function CalendarPage() {
                     .map((event, index) => (
                       <div 
                         key={event.id} 
-                        className="border border-[var(--supabase-border)] rounded-lg p-3.5 bg-[var(--supabase-lighter-bg)] hover:bg-[var(--supabase-inactive)] transition-all duration-300 ease-in-out group shadow-md hover:shadow-lg transform hover:translate-y-[-2px]"
+                        className="border border-[var(--supabase-border)] rounded-lg p-3.5 bg-[var(--supabase-lighter-bg)]/90 hover:bg-[var(--supabase-inactive)]/90 transition-all duration-300 ease-in-out group shadow-lg hover:shadow-xl transform hover:translate-y-[-3px]"
                         style={{
                           animationDelay: `${index * 50}ms`,
                         }}
@@ -728,7 +1075,7 @@ export default function CalendarPage() {
                       >
                         <div className="flex justify-between items-start">
                           <h4 className="font-medium text-white group-hover:text-white transition-colors duration-200">{event.summary}</h4>
-                          <Badge className={`${getEventColorClass(event)} text-white shadow-sm`}>
+                          <Badge className={`${getEventColorClass(event)} text-white shadow-md`}>
                             {formatEventTime(event.start.dateTime)}
                           </Badge>
                         </div>
@@ -772,10 +1119,24 @@ export default function CalendarPage() {
                             )}
                           </div>
                           <div className="opacity-0 group-hover:opacity-100 transition-all duration-300 flex space-x-2">
-                            <button className="text-[var(--supabase-accent)] hover:text-[var(--supabase-accent-hover)] transition-colors duration-200 transform hover:scale-110">
+                            <button 
+                              className="text-teal-500 hover:text-teal-400 transition-colors duration-200 transform hover:scale-110"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectEvent(event);
+                                handleEditMode();
+                              }}
+                            >
                               <Edit className="h-4 w-4" />
                             </button>
-                            <button className="text-red-500 hover:text-red-400 transition-colors duration-200 transform hover:scale-110">
+                            <button 
+                              className="text-red-500 hover:text-red-400 transition-colors duration-200 transform hover:scale-110"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedEvent(event);
+                                handleDeleteEvent();
+                              }}
+                            >
                               <Trash className="h-4 w-4" />
                             </button>
                           </div>
@@ -794,14 +1155,14 @@ export default function CalendarPage() {
                     }
                   }).length === 0 && (
                     <div className="text-center py-10">
-                      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[var(--supabase-inactive)]/10 mb-4">
-                        <Calendar className="h-8 w-8 text-gray-500" />
+                      <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-[var(--supabase-inactive)]/20 to-[var(--supabase-inactive)]/5 mb-4">
+                        <Calendar className="h-10 w-10 text-gray-500" />
                       </div>
                       <p className="text-gray-400 mb-2">No events scheduled for today</p>
                       {isGoogleConnected && (
                         <button 
                           onClick={() => handleSelectDate(new Date())}
-                          className="mt-2 text-[var(--supabase-accent)] hover:text-[var(--supabase-accent-hover)] text-sm transition-colors duration-200 flex items-center mx-auto"
+                          className="mt-2 text-teal-500 hover:text-teal-400 text-sm transition-all duration-200 flex items-center mx-auto px-3 py-1.5 rounded-md hover:bg-teal-500/10"
                         >
                           <Plus className="h-4 w-4 mr-1" />
                           Add Event
@@ -818,20 +1179,20 @@ export default function CalendarPage() {
 
       {/* Add/Edit Event Dialog */}
       <Dialog open={isEventDialogOpen} onOpenChange={setIsEventDialogOpen}>
-        <DialogContent className="bg-gradient-to-b from-[var(--supabase-light-bg)] to-[var(--supabase-light-bg)]/90 border-[var(--supabase-border)] text-white max-w-md rounded-xl shadow-xl">
+        <DialogContent className="bg-gradient-to-b from-[var(--supabase-light-bg)] to-[var(--supabase-light-bg)]/95 border-[var(--supabase-border)] text-white max-w-md rounded-xl shadow-2xl backdrop-blur-sm animate-in fade-in-50 duration-300 ease-out scale-in-95">
           <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">
-              {selectedEvent ? 'Event Details' : 'Add New Event'}
+            <DialogTitle className="text-xl font-semibold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300">
+              {selectedEvent ? (isEditMode ? 'Edit Event' : 'Event Details') : 'Add New Event'}
             </DialogTitle>
           </DialogHeader>
           
-          {selectedEvent ? (
+          {selectedEvent && !isEditMode ? (
             // Event details view
-            <div className="space-y-4 animate-in fade-in-50 duration-200 ease-in-out">
+            <div className="space-y-4 animate-in fade-in-50 duration-300 ease-out">
               <h2 className="text-xl font-semibold text-white">{selectedEvent.summary}</h2>
               
               <div className="flex items-center text-gray-300">
-                <Clock className="h-5 w-5 mr-2 text-[var(--supabase-accent)]" />
+                <Clock className="h-5 w-5 mr-2 text-teal-500" />
                 <div>
                   <div>{format(new Date(selectedEvent.start.dateTime), 'EEEE, MMMM d, yyyy')}</div>
                   <div>{formatEventTime(selectedEvent.start.dateTime)} - {formatEventTime(selectedEvent.end.dateTime)}</div>
@@ -840,7 +1201,7 @@ export default function CalendarPage() {
               
               {selectedEvent.location && (
                 <div className="flex items-center text-gray-300">
-                  <MapPin className="h-5 w-5 mr-2 text-[var(--supabase-accent)]" />
+                  <MapPin className="h-5 w-5 mr-2 text-teal-500" />
                   <span>{selectedEvent.location}</span>
                 </div>
               )}
@@ -848,7 +1209,7 @@ export default function CalendarPage() {
               {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
                 <div className="space-y-2">
                   <div className="flex items-center text-gray-300">
-                    <Users className="h-5 w-5 mr-2 text-[var(--supabase-accent)]" />
+                    <Users className="h-5 w-5 mr-2 text-teal-500" />
                     <span>{selectedEvent.attendees.length} Attendees</span>
                   </div>
                   <div className="ml-7 space-y-1.5">
@@ -873,7 +1234,7 @@ export default function CalendarPage() {
                     href={selectedEvent.htmlLink} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    className="text-[var(--supabase-accent)] hover:text-[var(--supabase-accent-hover)] hover:underline text-sm flex items-center"
+                    className="text-teal-500 hover:text-teal-400 hover:underline text-sm flex items-center"
                   >
                     <Calendar className="h-4 w-4 mr-1.5" />
                     Open in Google Calendar
@@ -882,8 +1243,8 @@ export default function CalendarPage() {
               )}
             </div>
           ) : (
-            // Add new event form
-            <div className="space-y-4 animate-in fade-in-50 duration-200 ease-in-out">
+            // Add new event form or edit form
+            <div className="space-y-4 animate-in fade-in-50 duration-300 ease-out">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-300">Event Title</label>
                 <Input 
@@ -948,7 +1309,8 @@ export default function CalendarPage() {
           )}
           
           <DialogFooter className="gap-2 sm:gap-0">
-            {selectedEvent ? (
+            {selectedEvent && !isEditMode ? (
+              // Event details view buttons
               <div className="flex space-x-2 w-full justify-end">
                 <Button
                   variant="secondary" 
@@ -958,37 +1320,54 @@ export default function CalendarPage() {
                   Close
                 </Button>
                 <Button
-                  onClick={() => {
-                    // Handle edit event
-                    setIsEventDialogOpen(false);
-                  }}
-                  className="bg-gradient-to-r from-[var(--supabase-accent)] to-blue-500 hover:from-[var(--supabase-accent-hover)] hover:to-blue-600 text-white transition-all duration-200 shadow-md hover:shadow-lg"
+                  onClick={handleEditMode}
+                  className="bg-gradient-to-r from-teal-500 to-teal-700 hover:from-teal-600 hover:to-teal-800 text-white transition-all duration-200 shadow-md hover:shadow-lg"
                 >
                   <Edit className="h-4 w-4 mr-1.5" />
                   Edit
                 </Button>
+                <Button
+                  onClick={handleDeleteEvent}
+                  disabled={isLoading}
+                  className="bg-gradient-to-r from-red-500 to-red-700 hover:from-red-600 hover:to-red-800 text-white transition-all duration-200 shadow-md hover:shadow-lg"
+                >
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash className="h-4 w-4" />
+                  )}
+                </Button>
               </div>
             ) : (
+              // Create or Edit mode buttons
               <div className="flex space-x-2 w-full justify-end">
                 <Button
                   variant="secondary" 
-                  onClick={() => setIsEventDialogOpen(false)}
+                  onClick={() => {
+                    if (selectedEvent && isEditMode) {
+                      // If in edit mode, return to view mode
+                      setIsEditMode(false);
+                    } else {
+                      // Otherwise close the dialog
+                      setIsEventDialogOpen(false);
+                    }
+                  }}
                   className="bg-[var(--supabase-darker-bg)] hover:bg-[var(--supabase-inactive)] border-[var(--supabase-border)] text-white transition-colors duration-200"
                 >
-                  Cancel
+                  {selectedEvent && isEditMode ? "Cancel Edit" : "Cancel"}
                 </Button>
                 <Button
-                  onClick={handleCreateEvent}
+                  onClick={selectedEvent && isEditMode ? handleUpdateEvent : handleCreateEvent}
                   disabled={isLoading}
-                  className="bg-gradient-to-r from-[var(--supabase-accent)] to-blue-500 hover:from-[var(--supabase-accent-hover)] hover:to-blue-600 text-white transition-all duration-200 shadow-md hover:shadow-lg"
+                  className="bg-gradient-to-r from-teal-500 to-teal-700 hover:from-teal-600 hover:to-teal-800 text-white transition-all duration-200 shadow-md hover:shadow-lg"
                 >
                   {isLoading ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                      Creating...
+                      {selectedEvent && isEditMode ? "Updating..." : "Creating..."}
                     </>
                   ) : (
-                    <>Create Event</>
+                    <>{selectedEvent && isEditMode ? "Update Event" : "Create Event"}</>
                   )}
                 </Button>
               </div>

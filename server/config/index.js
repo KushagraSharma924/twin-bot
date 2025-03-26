@@ -5,6 +5,20 @@ import { google } from 'googleapis';
 // Load environment variables
 dotenv.config();
 
+// Validate required environment variables
+if (!process.env.SUPABASE_URL) {
+  console.error('ERROR: SUPABASE_URL environment variable is required');
+  console.log('Available env vars:', Object.keys(process.env).filter(key => key.startsWith('SUPA')));
+}
+
+if (!process.env.SUPABASE_KEY) {
+  console.error('ERROR: SUPABASE_KEY environment variable is required');
+}
+
+if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+  console.error('WARNING: Google API credentials are missing');
+}
+
 // Export configuration
 export const config = {
   // Server config
@@ -37,8 +51,10 @@ export const config = {
   }
 };
 
-// Initialize Supabase client
-export const supabase = createClient(config.supabase.url, config.supabase.key);
+// Initialize Supabase client with validation
+export const supabase = config.supabase.url && config.supabase.key 
+  ? createClient(config.supabase.url, config.supabase.key)
+  : null;
 
 // Initialize Google OAuth2 client
 export const oauth2Client = new google.auth.OAuth2(

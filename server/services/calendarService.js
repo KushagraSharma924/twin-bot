@@ -35,9 +35,32 @@ export function getAuthUrl() {
  * @param {string} code - Authorization code from Google
  */
 export async function getTokens(code) {
+  try {
   const oauth2Client = createOAuth2Client();
   const { tokens } = await oauth2Client.getToken(code);
-  return tokens;
+    
+    // Make sure we have valid token data
+    if (!tokens || !tokens.access_token) {
+      throw new Error('Invalid token response from Google');
+    }
+    
+    // Log token information for debugging (without exposing the actual token)
+    console.log('Token received successfully');
+    console.log('Token Type:', tokens.token_type);
+    console.log('Has Refresh Token:', Boolean(tokens.refresh_token));
+    console.log('Expires In:', tokens.expires_in);
+    
+    // Return clean token object
+    return {
+      access_token: tokens.access_token,
+      token_type: tokens.token_type || 'Bearer',
+      expires_in: tokens.expires_in || 3600,
+      refresh_token: tokens.refresh_token
+    };
+  } catch (error) {
+    console.error('Error exchanging code for tokens:', error);
+    throw error;
+  }
 }
 
 /**
@@ -46,15 +69,72 @@ export async function getTokens(code) {
  * @param {Object} eventDetails - Event details to create
  */
 export async function createCalendarEvent(tokenInfo, eventDetails) {
+  try {
+    // Extra validation and debugging for token
+    console.log('createCalendarEvent called with tokenInfo:', {
+      hasTokenInfo: !!tokenInfo,
+      hasAccessToken: tokenInfo ? !!tokenInfo.access_token : false,
+      tokenType: typeof tokenInfo?.access_token,
+      tokenLength: tokenInfo?.access_token?.length
+    });
+    
+    // Robust token validation
+    if (!tokenInfo) {
+      throw new Error('Token info object is required');
+    }
+    
+    // Handle case where token might be a JSON string
+    let accessToken = tokenInfo.access_token;
+    if (typeof accessToken === 'string' && (accessToken.startsWith('{') || accessToken.startsWith('{'))) {
+      try {
+        const parsed = JSON.parse(accessToken);
+        if (parsed && parsed.token) {
+          console.log('Parsed nested token object');
+          accessToken = parsed.token;
+        }
+      } catch (e) {
+        // Not a JSON string, use as is
+        console.log('Access token is not a JSON string');
+      }
+    }
+    
+    if (!accessToken) {
+      throw new Error('Access token is required');
+    }
+    
+    // Create OAuth client with the token
   const oauth2Client = createOAuth2Client();
-  oauth2Client.setCredentials(tokenInfo);
+    oauth2Client.setCredentials({
+      access_token: accessToken
+    });
 
+    console.log('OAuth client created, calling Google Calendar API');
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
   
-  return await calendar.events.insert({
+    // Validate event details
+    if (!eventDetails || !eventDetails.summary || !eventDetails.start || !eventDetails.end) {
+      throw new Error('Invalid event details: summary, start, and end are required');
+    }
+    
+    // Attempt to create event
+    const response = await calendar.events.insert({
     calendarId: 'primary',
     resource: eventDetails,
   });
+    
+    console.log('Event created successfully:', response.data.id);
+    return response;
+  } catch (error) {
+    console.error('Error creating calendar event:', error);
+    // Check for auth errors to provide better error messages
+    if (error.message && (
+      error.message.includes('invalid_grant') || 
+      error.message.includes('Invalid Credentials')
+    )) {
+      throw new Error('Invalid Google credentials');
+    }
+    throw error;
+  }
 }
 
 /**
@@ -88,8 +168,29 @@ export async function listUpcomingEvents(tokenInfo, maxResults = 10) {
  */
 export async function getIndianHolidays(tokenInfo, startDate, endDate) {
   try {
+    // Skip if no tokenInfo
+    if (!tokenInfo || !tokenInfo.access_token) {
+      console.warn('Skipping Indian holidays - no valid token');
+      return [];
+    }
+    
+    // Handle case where token might be a JSON string
+    let accessToken = tokenInfo.access_token;
+    if (typeof accessToken === 'string' && (accessToken.startsWith('{') || accessToken.startsWith('{'))) {
+      try {
+        const parsed = JSON.parse(accessToken);
+        if (parsed && parsed.token) {
+          accessToken = parsed.token;
+        }
+      } catch (e) {
+        // Not a JSON string, use as is
+      }
+    }
+    
     const oauth2Client = createOAuth2Client();
-    oauth2Client.setCredentials(tokenInfo);
+    oauth2Client.setCredentials({
+      access_token: accessToken
+    });
 
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
@@ -111,6 +212,7 @@ export async function getIndianHolidays(tokenInfo, startDate, endDate) {
       isHoliday: true
     }));
     
+    console.log(`Found ${events.length} Indian holidays`);
     return events;
   } catch (error) {
     console.error('Error fetching Indian holidays:', error);
@@ -126,8 +228,29 @@ export async function getIndianHolidays(tokenInfo, startDate, endDate) {
  */
 export async function getHolidays(tokenInfo, startDate, endDate) {
   try {
+    // Skip if no tokenInfo
+    if (!tokenInfo || !tokenInfo.access_token) {
+      console.warn('Skipping holidays - no valid token');
+      return [];
+    }
+    
+    // Handle case where token might be a JSON string
+    let accessToken = tokenInfo.access_token;
+    if (typeof accessToken === 'string' && (accessToken.startsWith('{') || accessToken.startsWith('{'))) {
+      try {
+        const parsed = JSON.parse(accessToken);
+        if (parsed && parsed.token) {
+          accessToken = parsed.token;
+        }
+      } catch (e) {
+        // Not a JSON string, use as is
+      }
+    }
+    
     const oauth2Client = createOAuth2Client();
-    oauth2Client.setCredentials(tokenInfo);
+    oauth2Client.setCredentials({
+      access_token: accessToken
+    });
 
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
@@ -148,6 +271,7 @@ export async function getHolidays(tokenInfo, startDate, endDate) {
       isHoliday: true
     }));
     
+    console.log(`Found ${events.length} US holidays`);
     return events;
   } catch (error) {
     console.error('Error fetching holidays:', error);
@@ -163,9 +287,46 @@ export async function getHolidays(tokenInfo, startDate, endDate) {
  */
 export async function getAllEvents(tokenInfo, startDate, endDate) {
   try {
+    // Extra validation and debugging for token
+    console.log('getAllEvents called with tokenInfo:', {
+      hasTokenInfo: !!tokenInfo,
+      hasAccessToken: tokenInfo ? !!tokenInfo.access_token : false,
+      tokenType: typeof tokenInfo?.access_token,
+      tokenLength: tokenInfo?.access_token?.length
+    });
+    
+    // Robust token validation
+    if (!tokenInfo) {
+      throw new Error('Token info object is required');
+    }
+    
+    // Handle case where token might be a JSON string
+    let accessToken = tokenInfo.access_token;
+    if (typeof accessToken === 'string' && (accessToken.startsWith('{') || accessToken.startsWith('{'))) {
+      try {
+        const parsed = JSON.parse(accessToken);
+        if (parsed && parsed.token) {
+          console.log('Parsed nested token object');
+          accessToken = parsed.token;
+        }
+      } catch (e) {
+        // Not a JSON string, use as is
+        console.log('Access token is not a JSON string');
+      }
+    }
+    
+    if (!accessToken) {
+      throw new Error('Access token is required');
+    }
+    
+    // Create OAuth client with the token
     const oauth2Client = createOAuth2Client();
-    oauth2Client.setCredentials(tokenInfo);
-
+    oauth2Client.setCredentials({
+      access_token: accessToken
+    });
+    
+    console.log('OAuth client created for fetching events, date range:',
+      startDate.toISOString(), 'to', endDate.toISOString());
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
     // Get user's events
@@ -176,6 +337,8 @@ export async function getAllEvents(tokenInfo, startDate, endDate) {
       singleEvents: true,
       orderBy: 'startTime',
     });
+    
+    console.log(`Found ${userEventsResponse.data.items.length} user events`);
     
     // Get Indian holidays
     const indianHolidays = await getIndianHolidays(tokenInfo, startDate, endDate);
@@ -190,9 +353,138 @@ export async function getAllEvents(tokenInfo, startDate, endDate) {
       ...holidays
     ];
     
+    console.log(`Returning total of ${allEvents.length} events`);
     return allEvents;
   } catch (error) {
     console.error('Error fetching all events:', error);
+    // Check for auth errors to provide better error messages
+    if (error.message && (
+      error.message.includes('invalid_grant') || 
+      error.message.includes('Invalid Credentials')
+    )) {
+      throw new Error('Invalid Google credentials');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Update a calendar event
+ * @param {Object} tokenInfo - User's Google OAuth tokens
+ * @param {string} eventId - ID of the event to update
+ * @param {Object} eventDetails - Updated event details
+ */
+export async function updateCalendarEvent(tokenInfo, eventId, eventDetails) {
+  try {
+    // Validate token
+    if (!tokenInfo || !tokenInfo.access_token) {
+      throw new Error('Access token is required');
+    }
+    
+    // Handle case where token might be a JSON string
+    let accessToken = tokenInfo.access_token;
+    if (typeof accessToken === 'string' && (accessToken.startsWith('{') || accessToken.startsWith('['))) {
+      try {
+        const parsed = JSON.parse(accessToken);
+        if (parsed && parsed.token) {
+          accessToken = parsed.token;
+        }
+      } catch (e) {
+        // Not a JSON string, use as is
+      }
+    }
+    
+    // Create OAuth client
+    const oauth2Client = createOAuth2Client();
+    oauth2Client.setCredentials({
+      access_token: accessToken
+    });
+    
+    // Initialize calendar API
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    
+    // Validate event ID and details
+    if (!eventId) {
+      throw new Error('Event ID is required');
+    }
+    
+    if (!eventDetails || !eventDetails.summary) {
+      throw new Error('Event details with summary are required');
+    }
+    
+    // Ensure dates are properly formatted
+    if (eventDetails.start && !eventDetails.start.timeZone) {
+      eventDetails.start.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    }
+    
+    if (eventDetails.end && !eventDetails.end.timeZone) {
+      eventDetails.end.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    }
+    
+    // Update the event
+    const response = await calendar.events.update({
+      calendarId: 'primary',
+      eventId: eventId,
+      resource: eventDetails
+    });
+    
+    console.log(`Event ${eventId} updated successfully`);
+    return response.data;
+  } catch (error) {
+    console.error('Error updating calendar event:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a calendar event
+ * @param {Object} tokenInfo - User's Google OAuth tokens
+ * @param {string} eventId - ID of the event to delete
+ */
+export async function deleteCalendarEvent(tokenInfo, eventId) {
+  try {
+    // Validate token
+    if (!tokenInfo || !tokenInfo.access_token) {
+      throw new Error('Access token is required');
+    }
+    
+    // Handle case where token might be a JSON string
+    let accessToken = tokenInfo.access_token;
+    if (typeof accessToken === 'string' && (accessToken.startsWith('{') || accessToken.startsWith('['))) {
+      try {
+        const parsed = JSON.parse(accessToken);
+        if (parsed && parsed.token) {
+          accessToken = parsed.token;
+        }
+      } catch (e) {
+        // Not a JSON string, use as is
+      }
+    }
+    
+    // Create OAuth client
+    const oauth2Client = createOAuth2Client();
+    oauth2Client.setCredentials({
+      access_token: accessToken
+    });
+    
+    // Initialize calendar API
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    
+    // Validate event ID
+    if (!eventId) {
+      throw new Error('Event ID is required');
+    }
+    
+    // Delete the event
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: eventId
+    });
+    
+    console.log(`Event ${eventId} deleted successfully`);
+    return true;
+  } catch (error) {
+    console.error('Error deleting calendar event:', error);
     throw error;
   }
 }
@@ -202,6 +494,8 @@ export default {
   getAuthUrl,
   getTokens,
   createCalendarEvent,
+  updateCalendarEvent,
+  deleteCalendarEvent,
   listUpcomingEvents,
   getIndianHolidays,
   getHolidays,
