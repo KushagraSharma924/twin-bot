@@ -5,16 +5,138 @@ import * as emailService from '../services/emailService.js';
 const router = express.Router();
 
 /**
+ * Helper function to prepare email credentials
+ * Combines basic credentials with OAuth2 tokens if available
+ */
+async function prepareEmailCredentials(userId, baseCredentials = {}) {
+  // Get the user's email configuration if not provided
+  let emailConfig = baseCredentials;
+  
+  if (!emailConfig.host) {
+    const { data, error } = await supabase
+      .from('email_configurations')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+      
+    if (error) {
+      throw new Error('Email configuration not found');
+    }
+    
+    emailConfig = {
+      ...emailConfig,
+      host: data.host,
+      port: data.port || 993,
+      secure: data.secure !== false,
+      provider: data.provider
+    };
+  }
+  
+  // If user email is not provided, get it from profile
+  if (!emailConfig.user) {
+    const { data: profileData, error: profileError } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', userId)
+      .single();
+      
+    if (!profileError && profileData && profileData.email) {
+      emailConfig.user = profileData.email;
+    } else {
+      console.error('Error getting user email from profile:', profileError);
+      throw new Error('User email address is required');
+    }
+  }
+  
+  // Check if user has OAuth tokens
+  if (!emailConfig.password && !emailConfig.oauth2) {
+    const { data: tokenData, error: tokenError } = await supabase
+      .from('email_oauth_tokens')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('provider', emailConfig.provider)
+      .single();
+      
+    if (!tokenError && tokenData) {
+      // Check if token is expired and needs refreshing
+      const expiresAt = new Date(tokenData.expires_at);
+      const now = new Date();
+      
+      if (expiresAt <= now && tokenData.refresh_token) {
+        // Token expired, refresh it
+        try {
+          const refreshedTokens = await emailService.refreshOAuth2Token({
+            provider: tokenData.provider,
+            refreshToken: tokenData.refresh_token
+          });
+          
+          // Update tokens in database
+          await supabase
+            .from('email_oauth_tokens')
+            .update({
+              access_token: refreshedTokens.accessToken,
+              refresh_token: refreshedTokens.refreshToken || tokenData.refresh_token,
+              expires_at: new Date(refreshedTokens.expiresAt).toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', tokenData.id);
+            
+          // Use refreshed tokens
+          emailConfig.oauth2 = {
+            accessToken: refreshedTokens.accessToken,
+            refreshToken: refreshedTokens.refreshToken || tokenData.refresh_token,
+            expiresAt: refreshedTokens.expiresAt,
+            // Add OAuth provider-specific client details
+            clientId: process.env[`${tokenData.provider.toUpperCase()}_CLIENT_ID`],
+            clientSecret: process.env[`${tokenData.provider.toUpperCase()}_CLIENT_SECRET`]
+          };
+        } catch (refreshError) {
+          console.error('Error refreshing OAuth token:', refreshError);
+          throw new Error('Failed to refresh OAuth token. Please reconnect your email account.');
+        }
+      } else if (expiresAt > now) {
+        // Token still valid, use it
+        emailConfig.oauth2 = {
+          accessToken: tokenData.access_token,
+          refreshToken: tokenData.refresh_token,
+          expiresAt: new Date(tokenData.expires_at).getTime(),
+          // Add OAuth provider-specific client details
+          clientId: process.env[`${tokenData.provider.toUpperCase()}_CLIENT_ID`],
+          clientSecret: process.env[`${tokenData.provider.toUpperCase()}_CLIENT_SECRET`]
+        };
+      } else {
+        // Token expired and no refresh token
+        throw new Error('OAuth token expired and no refresh token available. Please reconnect your email account.');
+      }
+    }
+  }
+  
+  // Final validation
+  if (!emailConfig.user) {
+    throw new Error('User email address is required');
+  }
+  
+  if (!emailConfig.oauth2 && !emailConfig.password) {
+    throw new Error('No authentication method provided. Please provide either a password or use OAuth');
+  }
+  
+  return emailConfig;
+}
+
+/**
  * Fetch emails from the user's mailbox
  * POST /api/email/fetch
  */
 router.post('/fetch', async (req, res) => {
   try {
-    const { credentials, options, saveMetadata } = req.body;
+    const { credentials: baseCredentials = {}, options, saveMetadata } = req.body;
     const userId = req.user.id;
     
+    // Prepare full credentials including OAuth if available
+    const fullCredentials = await prepareEmailCredentials(userId, baseCredentials);
+    
     // Fetch emails using the service
-    const emails = await emailService.fetchEmails(credentials, options);
+    const emails = await emailService.fetchEmails(fullCredentials, options);
     
     // Save metadata if requested
     if (saveMetadata && emails.length > 0) {
@@ -53,10 +175,14 @@ router.post('/fetch', async (req, res) => {
  */
 router.post('/mailboxes', async (req, res) => {
   try {
-    const { credentials } = req.body;
+    const { credentials: baseCredentials = {} } = req.body;
+    const userId = req.user.id;
+    
+    // Prepare full credentials including OAuth if available
+    const fullCredentials = await prepareEmailCredentials(userId, baseCredentials);
     
     // Get mailboxes using the service
-    const mailboxes = await emailService.listMailboxes(credentials);
+    const mailboxes = await emailService.listMailboxes(fullCredentials);
     
     res.json({ mailboxes });
   } catch (error) {
@@ -71,10 +197,14 @@ router.post('/mailboxes', async (req, res) => {
  */
 router.post('/mark-read', async (req, res) => {
   try {
-    const { credentials, mailbox, uid } = req.body;
+    const { credentials: baseCredentials = {}, mailbox, uid } = req.body;
+    const userId = req.user.id;
+    
+    // Prepare full credentials including OAuth if available
+    const fullCredentials = await prepareEmailCredentials(userId, baseCredentials);
     
     // Mark email as read using the service
-    await emailService.markAsRead(credentials, mailbox, uid);
+    await emailService.markAsRead(fullCredentials, mailbox, uid);
     
     res.json({ success: true });
   } catch (error) {
@@ -89,10 +219,14 @@ router.post('/mark-read', async (req, res) => {
  */
 router.post('/move', async (req, res) => {
   try {
-    const { credentials, sourceMailbox, targetMailbox, uid } = req.body;
+    const { credentials: baseCredentials = {}, sourceMailbox, targetMailbox, uid } = req.body;
+    const userId = req.user.id;
+    
+    // Prepare full credentials including OAuth if available
+    const fullCredentials = await prepareEmailCredentials(userId, baseCredentials);
     
     // Move email using the service
-    await emailService.moveEmail(credentials, sourceMailbox, targetMailbox, uid);
+    await emailService.moveEmail(fullCredentials, sourceMailbox, targetMailbox, uid);
     
     res.json({ success: true });
   } catch (error) {
@@ -107,10 +241,14 @@ router.post('/move', async (req, res) => {
  */
 router.post('/stats', async (req, res) => {
   try {
-    const { credentials, mailbox } = req.body;
+    const { credentials: baseCredentials = {}, mailbox } = req.body;
+    const userId = req.user.id;
+    
+    // Prepare full credentials including OAuth if available
+    const fullCredentials = await prepareEmailCredentials(userId, baseCredentials);
     
     // Get mailbox statistics using the service
-    const stats = await emailService.getMailboxStats(credentials, mailbox);
+    const stats = await emailService.getMailboxStats(fullCredentials, mailbox);
     
     res.json(stats);
   } catch (error) {
@@ -313,6 +451,43 @@ router.get('/config', async (req, res) => {
   } catch (error) {
     console.error('Error getting email configuration:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Test OAuth connection
+ * GET /api/email/test-oauth
+ */
+router.get('/test-oauth', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Prepare credentials with OAuth if available
+    const credentials = await prepareEmailCredentials(userId);
+    
+    if (!credentials.oauth2) {
+      return res.status(400).json({ error: 'No OAuth configuration found for this user' });
+    }
+    
+    // Just test connection without fetching any emails
+    const client = emailService.createImapClient(credentials);
+    await client.connect();
+    
+    // If we get here, connection was successful
+    await client.logout();
+    
+    res.json({ 
+      success: true, 
+      message: 'OAuth authentication successful',
+      provider: credentials.provider,
+      user: credentials.user
+    });
+  } catch (error) {
+    console.error('OAuth test failed:', error);
+    res.status(500).json({ 
+      error: error.message,
+      success: false
+    });
   }
 });
 

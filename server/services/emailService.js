@@ -10,8 +10,25 @@ dotenv.config();
  * @returns {ImapFlow} IMAP client instance
  */
 export function createImapClient(credentials) {
+  console.log('Creating IMAP client with credentials:', {
+    host: credentials.host,
+    user: credentials.user,
+    useOAuth: !!credentials.oauth2,
+    // Don't log the actual tokens for security reasons
+    authMethod: credentials.oauth2 ? 'oauth2' : 'password'
+  });
+  
   // Check if we're using OAuth2 or password authentication
   if (credentials.oauth2) {
+    // Validate OAuth2 credentials
+    if (!credentials.oauth2.accessToken) {
+      throw new Error('OAuth2 access token is required');
+    }
+    
+    if (!credentials.user) {
+      throw new Error('User email is required for OAuth2 authentication');
+    }
+    
     return new ImapFlow({
       host: credentials.host,
       port: credentials.port || 993,
@@ -29,6 +46,15 @@ export function createImapClient(credentials) {
       logger: false
     });
   } else {
+    // Validate password credentials
+    if (!credentials.password) {
+      throw new Error('Password is required for password authentication');
+    }
+    
+    if (!credentials.user) {
+      throw new Error('User email is required for password authentication');
+    }
+    
     // Fall back to password authentication for providers that don't support OAuth
     return new ImapFlow({
       host: credentials.host,
@@ -44,7 +70,7 @@ export function createImapClient(credentials) {
 }
 
 /**
- * Fetch emails from user's inbox
+ * Fetch emails from user's mailbox
  * @param {Object} credentials - User's email credentials
  * @param {Object} options - Options for fetching emails
  * @param {number} options.limit - Maximum number of emails to fetch (default: 20)
@@ -64,9 +90,28 @@ export async function fetchEmails(credentials, options = {}) {
     credentials: {
       host: credentials.host,
       user: credentials.user,
-      useOAuth: !!credentials.oauth2
+      useOAuth: !!credentials.oauth2,
+      hasPassword: typeof credentials.password === 'string', 
+      passwordLength: credentials.password ? credentials.password.length : 0,
+      oauth2Info: credentials.oauth2 ? {
+        hasAccessToken: !!credentials.oauth2.accessToken,
+        hasRefreshToken: !!credentials.oauth2.refreshToken,
+        hasClientId: !!credentials.oauth2.clientId,
+        hasClientSecret: !!credentials.oauth2.clientSecret,
+        accessTokenLength: credentials.oauth2.accessToken ? credentials.oauth2.accessToken.length : 0
+      } : null
     }
   }, null, 2));
+  
+  // Check if authentication credentials are missing
+  if (!credentials.oauth2 && !credentials.password) {
+    console.error('Authentication Error: Neither password nor OAuth2 credentials were provided');
+    throw new Error('Authentication Error: No authentication method provided. Please provide either a password or OAuth2 credentials.');
+  }
+  
+  if (credentials.oauth2 && !credentials.oauth2.accessToken) {
+    console.error('OAuth2 Error: Access token is missing');
+  }
   
   const client = createImapClient(credentials);
   
@@ -75,199 +120,114 @@ export async function fetchEmails(credentials, options = {}) {
     console.log('Connecting to IMAP server...');
     await client.connect();
     console.log('Connected to IMAP server successfully');
+
+    // For Gmail, handle special mailbox paths
+    const isGmail = credentials.host.includes('gmail') || credentials.provider === 'gmail';
+    let mailboxPath = mailbox;
+
+    if (isGmail) {
+      // Map common mailbox names to Gmail-specific paths if not already in Gmail format
+      if (!mailbox.startsWith('[Gmail]')) {
+        const gmailMailboxMap = {
+          'SENT': '[Gmail]/Sent Mail',
+          'DRAFTS': '[Gmail]/Drafts',
+          'ARCHIVE': '[Gmail]/All Mail',
+          'TRASH': '[Gmail]/Trash',
+          'SPAM': '[Gmail]/Spam',
+          'STARRED': '[Gmail]/Starred',
+          'IMPORTANT': '[Gmail]/Important'
+        };
+        mailboxPath = gmailMailboxMap[mailbox.toUpperCase()] || mailbox;
+      }
+    }
     
     // Select the mailbox to open
-    console.log(`Opening mailbox: "${mailbox}"`);
-    const mailboxInfo = await client.mailboxOpen(mailbox);
+    console.log(`Opening mailbox: "${mailboxPath}"`);
+    const mailboxInfo = await client.mailboxOpen(mailboxPath);
     console.log('Mailbox opened successfully');
     console.log(`Mailbox has ${mailboxInfo.exists} total messages, ${mailboxInfo.unseen || 0} unseen`);
     
-    try {
-      // Prepare the emails array
-      const emails = [];
+    // Prepare the emails array
+    const emails = [];
+    
+    // Check if we have any messages to fetch
+    if (mailboxInfo.exists === 0) {
+      console.log('Mailbox is empty, no emails to fetch');
+      return emails;
+    }
+    
+    // Build search query
+    const searchOptions = {
+      reverse: true, // Get newest emails first
+      limit
+    };
+    
+    // Add criteria for unseen only if requested
+    if (unseenOnly) {
+      searchOptions.searchCriteria = [['UNSEEN']];
+      console.log('Searching for UNSEEN emails only');
+    } else {
+      console.log('Searching for ALL emails (including read)');
+    }
+    
+    console.log('Fetch search options:', JSON.stringify(searchOptions));
+    
+    // Fetch emails 
+    let count = 0;
+    
+    console.log('Fetching emails...');
+    for await (const message of client.fetch(searchOptions, { envelope: true, source: true, flags: true })) {
+      count++;
+      console.log(`Processing email ${count} with UID: ${message.uid}`);
       
-      // Check if we have any messages to fetch
-      if (mailboxInfo.exists === 0) {
-        console.log('Mailbox is empty, no emails to fetch');
-        return emails;
-      }
-      
-      // For Gmail, we need a different approach
-      const isGmail = credentials.host.includes('gmail') || credentials.provider === 'gmail';
-      
-      if (isGmail) {
-        console.log('Using Gmail-specific approach for fetching emails');
+      try {
+        // Get email content
+        const parsed = await simpleParser(message.source);
         
-        // Calculate the sequence range for the most recent emails
-        let startSeq = mailboxInfo.exists; // Most recent email
-        let endSeq = Math.max(1, startSeq - limit + 1); // Go back 'limit' emails
-        
-        // If looking for unseen only, we need to use SEARCH
-        if (unseenOnly) {
-          console.log('Searching for UNSEEN emails only');
-          // Search for all unseen messages
-          const searchResult = await client.search({ unseen: true });
-          
-          if (searchResult.length === 0) {
-            console.log('No unseen messages found');
-            return emails;
-          }
-          
-          // Sort to get the most recent first (highest sequence number)
-          searchResult.sort((a, b) => b - a);
-          
-          // Take only up to the limit
-          const limitedResults = searchResult.slice(0, limit);
-          
-          console.log(`Found ${limitedResults.length} unseen emails`);
-          
-          // Fetch each message
-          for (const sequence of limitedResults) {
-            try {
-              // Fetch the message
-              const fetchResult = await client.fetchOne(sequence, { source: true });
-              
-              if (fetchResult && fetchResult.source) {
-                // Parse the email
-                const parsed = await simpleParser(fetchResult.source);
-                
-                // Create the email object
-                const email = {
-                  id: fetchResult.uid,
-                  messageId: parsed.messageId,
-                  subject: parsed.subject,
-                  from: parsed.from?.text,
-                  to: parsed.to?.text,
-                  date: parsed.date,
-                  receivedDate: parsed.receivedDate,
-                  text: parsed.text,
-                  html: parsed.html,
-                  attachments: parsed.attachments.map(attachment => ({
-                    filename: attachment.filename,
-                    contentType: attachment.contentType,
-                    size: attachment.size
-                  })),
-                  flags: fetchResult.flags
-                };
-                
-                emails.push(email);
-              }
-            } catch (fetchError) {
-              console.error(`Error fetching message ${sequence}:`, fetchError.message);
-            }
-          }
-        } else {
-          // Fetch the most recent emails
-          console.log(`Fetching ${limit} most recent emails (sequence ${endSeq} to ${startSeq})`);
-          
-          for (let seq = startSeq; seq >= endSeq; seq--) {
-            try {
-              // Fetch one message at a time
-              const fetchResult = await client.fetchOne(seq, { source: true });
-              
-              if (fetchResult && fetchResult.source) {
-                console.log(`Processing email with UID: ${fetchResult.uid}`);
-                
-                // Parse the email
-                const parsed = await simpleParser(fetchResult.source);
-                
-                // Create the email object
-                const email = {
-                  id: fetchResult.uid,
-                  messageId: parsed.messageId,
-                  subject: parsed.subject,
-                  from: parsed.from?.text,
-                  to: parsed.to?.text,
-                  date: parsed.date,
-                  receivedDate: parsed.receivedDate,
-                  text: parsed.text,
-                  html: parsed.html,
-                  attachments: parsed.attachments.map(attachment => ({
-                    filename: attachment.filename,
-                    contentType: attachment.contentType,
-                    size: attachment.size
-                  })),
-                  flags: fetchResult.flags
-                };
-                
-                emails.push(email);
-              }
-            } catch (fetchError) {
-              console.error(`Error fetching message ${seq}:`, fetchError.message);
-            }
-          }
-        }
-      } else {
-        // Non-Gmail approach
-        console.log('Using standard approach for fetching emails');
-        
-        // Build search query
-        const searchOptions = {
-          reverse: true, // Get newest emails first
-          limit
+        // Extract relevant information
+        const email = {
+          id: message.uid,
+          messageId: parsed.messageId,
+          subject: parsed.subject,
+          from: parsed.from?.text,
+          to: parsed.to?.text,
+          date: parsed.date,
+          receivedDate: parsed.receivedDate,
+          text: parsed.text,
+          html: parsed.html,
+          attachments: parsed.attachments.map(attachment => ({
+            filename: attachment.filename,
+            contentType: attachment.contentType,
+            size: attachment.size
+          })),
+          flags: message.flags,
+          mailbox: mailboxPath // Add mailbox information
         };
         
-        // Add criteria for unseen only if requested
-        if (unseenOnly) {
-          searchOptions.searchCriteria = [['UNSEEN']];
-          console.log('Searching for UNSEEN emails only');
-        } else {
-          console.log('Searching for ALL emails (including read)');
-        }
-        
-        console.log('Fetch search options:', JSON.stringify(searchOptions));
-        
-        // Fetch emails 
-        let count = 0;
-        
-        console.log('Fetching emails...');
-        for await (const message of client.fetch(searchOptions, { envelope: true, source: true })) {
-          count++;
-          console.log(`Processing email ${count} with UID: ${message.uid}`);
-          
-          // Get email content
-          const parsed = await simpleParser(message.source);
-          
-          // Extract relevant information
-          const email = {
-            id: message.uid,
-            messageId: parsed.messageId,
-            subject: parsed.subject,
-            from: parsed.from?.text,
-            to: parsed.to?.text,
-            date: parsed.date,
-            receivedDate: parsed.receivedDate,
-            text: parsed.text,
-            html: parsed.html,
-            attachments: parsed.attachments.map(attachment => ({
-              filename: attachment.filename,
-              contentType: attachment.contentType,
-              size: attachment.size
-            })),
-            flags: message.flags
-          };
-          
-          emails.push(email);
-        }
-      }
-      
-      console.log(`Fetch complete. Found ${emails.length} emails`);
-      
-      return emails;
-    } finally {
-      try {
-        // Close the mailbox and release resources
-        await client.mailboxClose();
-      } catch (error) {
-        console.error('Error closing mailbox:', error);
+        emails.push(email);
+      } catch (parseError) {
+        console.error(`Error parsing email ${message.uid}:`, parseError);
+        // Continue with next email instead of failing the entire request
+        continue;
       }
     }
+    
+    console.log(`Fetch complete. Found ${emails.length} emails`);
+    
+    return emails;
   } catch (error) {
     console.error('Error fetching emails:', error);
     throw error;
   } finally {
-    // Close the connection
     try {
+      // Close the mailbox and release resources
+      await client.mailboxClose();
+    } catch (error) {
+      console.error('Error closing mailbox:', error);
+    }
+    
+    try {
+      // Close the connection
       await client.logout();
     } catch (error) {
       console.error('Error closing connection:', error);
@@ -542,34 +502,64 @@ export async function refreshOAuth2Token(tokenInfo) {
     throw new Error('Refresh token is required');
   }
   
-  const response = await fetch(config.tokenUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    body: new URLSearchParams({
-      refresh_token: tokenInfo.refreshToken,
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      grant_type: 'refresh_token'
-    })
-  });
+  console.log(`Refreshing OAuth token for provider: ${tokenInfo.provider}`);
   
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(`Token refresh failed: ${errorData.error_description || errorData.error || response.statusText}`);
+  // Check if client credentials are available
+  if (!config.clientId || !config.clientSecret) {
+    throw new Error(`OAuth client credentials missing for provider: ${tokenInfo.provider}`);
   }
   
-  const tokens = await response.json();
-  
-  // Calculate new expiration timestamp
-  const expiresAt = Date.now() + (tokens.expires_in * 1000);
-  
-  return {
-    accessToken: tokens.access_token,
-    // Some providers don't return a new refresh token, so keep the old one
-    refreshToken: tokens.refresh_token || tokenInfo.refreshToken,
-    expiresAt,
-    provider: tokenInfo.provider
-  };
+  try {
+    const response = await fetch(config.tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        refresh_token: tokenInfo.refreshToken,
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        grant_type: 'refresh_token'
+      })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorJson;
+      try {
+        errorJson = JSON.parse(errorText);
+      } catch (e) {
+        // Not JSON response
+      }
+      
+      console.error('Token refresh failed:', {
+        status: response.status,
+        statusText: response.statusText,
+        errorBody: errorJson || errorText
+      });
+      
+      throw new Error(`Token refresh failed: ${
+        errorJson?.error_description || 
+        errorJson?.error || 
+        response.statusText || 
+        `HTTP ${response.status}`
+      }`);
+    }
+    
+    const tokens = await response.json();
+    
+    // Calculate new expiration timestamp
+    const expiresAt = Date.now() + (tokens.expires_in * 1000);
+    
+    return {
+      accessToken: tokens.access_token,
+      // Some providers don't return a new refresh token, so keep the old one
+      refreshToken: tokens.refresh_token || tokenInfo.refreshToken,
+      expiresAt,
+      provider: tokenInfo.provider
+    };
+  } catch (error) {
+    console.error('Error refreshing OAuth token:', error);
+    throw error;
+  }
 } 

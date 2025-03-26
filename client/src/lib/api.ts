@@ -625,4 +625,304 @@ export async function updateCalendarEvent(
     console.error('Error updating calendar event:', error);
     throw error;
   }
+}
+
+// Email interfaces
+export interface EmailAttachment {
+  filename: string;
+  contentType: string;
+  size: number;
+}
+
+export interface Email {
+  id: string;
+  messageId: string;
+  subject: string;
+  from: string;
+  to: string;
+  date: string; 
+  receivedDate: string;
+  text: string;
+  html: string;
+  attachments: EmailAttachment[];
+  flags: string[];
+}
+
+export interface Mailbox {
+  path: string;
+  name: string;
+  delimiter: string;
+  specialUse?: string;
+  exists: number;
+  unseen?: number;
+}
+
+// Email service functions
+export async function fetchEmails(options: { 
+  limit?: number; 
+  mailbox?: string; 
+  unseen?: boolean;
+} = {}): Promise<{ emails: Email[]; error?: boolean }> {
+  try {
+    const session = getSession();
+    
+    if (!session || !session.access_token) {
+      console.warn("No session or access token, can't fetch emails");
+      return { emails: [], error: true };
+    }
+
+    // Make the API request
+    const response = await fetch(`${API_URL}/api/email/fetch`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ 
+        options: {
+          limit: options.limit || 20,
+          mailbox: options.mailbox || 'INBOX',
+          unseen: options.unseen || false
+        },
+        saveMetadata: true
+      })
+    });
+
+    // Handle auth errors
+    if (response.status === 401) {
+      // Try to refresh the token
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        // Retry with new token
+        return fetchEmails(options);
+      } else {
+        console.error("Authentication failed and refresh failed");
+        return { emails: [], error: true };
+      }
+    }
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error("Email fetch error:", error);
+      return { emails: [], error: true };
+    }
+
+    const data = await response.json();
+    return { emails: data.emails || [] };
+  } catch (error: any) {
+    console.error('Error fetching emails:', error);
+    return { emails: [], error: true };
+  }
+}
+
+export async function listMailboxes(): Promise<{ mailboxes: Mailbox[]; error?: boolean }> {
+  try {
+    const session = getSession();
+    
+    if (!session || !session.access_token) {
+      console.warn("No session or access token, can't fetch mailboxes");
+      return { mailboxes: [], error: true };
+    }
+
+    // Make the API request
+    const response = await fetch(`${API_URL}/api/email/mailboxes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({})
+    });
+
+    // Handle auth errors
+    if (response.status === 401) {
+      // Try to refresh the token
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        // Retry with new token
+        return listMailboxes();
+      } else {
+        console.error("Authentication failed and refresh failed");
+        return { mailboxes: [], error: true };
+      }
+    }
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error("Mailbox list error:", error);
+      return { mailboxes: [], error: true };
+    }
+
+    const data = await response.json();
+    return { mailboxes: data.mailboxes || [] };
+  } catch (error: any) {
+    console.error('Error listing mailboxes:', error);
+    return { mailboxes: [], error: true };
+  }
+}
+
+export async function markEmailAsRead(mailbox: string, uid: string): Promise<boolean> {
+  try {
+    const session = getSession();
+    
+    if (!session || !session.access_token) {
+      console.warn("No session or access token, can't mark email as read");
+      return false;
+    }
+
+    // Make the API request
+    const response = await fetch(`${API_URL}/api/email/mark-read`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ mailbox, uid })
+    });
+
+    // Handle auth errors
+    if (response.status === 401) {
+      // Try to refresh the token
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        // Retry with new token
+        return markEmailAsRead(mailbox, uid);
+      } else {
+        console.error("Authentication failed and refresh failed");
+        return false;
+      }
+    }
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error("Mark as read error:", error);
+      return false;
+    }
+
+    return true;
+  } catch (error: any) {
+    console.error('Error marking email as read:', error);
+    return false;
+  }
+}
+
+export async function moveEmail(sourceMailbox: string, targetMailbox: string, uid: string): Promise<boolean> {
+  try {
+    const session = getSession();
+    
+    if (!session || !session.access_token) {
+      console.warn("No session or access token, can't move email");
+      return false;
+    }
+
+    // Make the API request
+    const response = await fetch(`${API_URL}/api/email/move`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ sourceMailbox, targetMailbox, uid })
+    });
+
+    // Handle auth errors
+    if (response.status === 401) {
+      // Try to refresh the token
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        // Retry with new token
+        return moveEmail(sourceMailbox, targetMailbox, uid);
+      } else {
+        console.error("Authentication failed and refresh failed");
+        return false;
+      }
+    }
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error("Email move error:", error);
+      return false;
+    }
+
+    return true;
+  } catch (error: any) {
+    console.error('Error moving email:', error);
+    return false;
+  }
+}
+
+export async function getEmailOAuthUrl(): Promise<string> {
+  try {
+    const session = getSession();
+    if (!session) {
+      throw new Error('Authentication required');
+    }
+
+    const response = await fetch(`${API_URL}/api/email/auth-url`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to get email auth URL');
+    }
+
+    const data = await response.json();
+    return data.url;
+  } catch (error: any) {
+    console.error('Error getting email auth URL:', error);
+    throw error;
+  }
+}
+
+export async function getMailboxStats(mailbox: string = 'INBOX'): Promise<{ total: number; unseen: number; error?: boolean }> {
+  try {
+    const session = getSession();
+    
+    if (!session || !session.access_token) {
+      console.warn("No session or access token, can't fetch mailbox stats");
+      return { total: 0, unseen: 0, error: true };
+    }
+
+    // Make the API request
+    const response = await fetch(`${API_URL}/api/email/stats`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ mailbox })
+    });
+
+    // Handle auth errors
+    if (response.status === 401) {
+      // Try to refresh the token
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        // Retry with new token
+        return getMailboxStats(mailbox);
+      } else {
+        console.error("Authentication failed and refresh failed");
+        return { total: 0, unseen: 0, error: true };
+      }
+    }
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error("Mailbox stats error:", error);
+      return { total: 0, unseen: 0, error: true };
+    }
+
+    const data = await response.json();
+    return { 
+      total: data.total || 0, 
+      unseen: data.unseen || 0 
+    };
+  } catch (error: any) {
+    console.error('Error getting mailbox stats:', error);
+    return { total: 0, unseen: 0, error: true };
+  }
 } 
