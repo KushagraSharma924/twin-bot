@@ -23,7 +23,7 @@ const PORT = config.port;
 const corsOptions = {
   origin: process.env.CLIENT_URL || 'http://localhost:3000',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Google-Token'],
   credentials: true,
   preflightContinue: false,
   optionsSuccessStatus: 204

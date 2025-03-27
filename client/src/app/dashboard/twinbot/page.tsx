@@ -338,7 +338,8 @@ export default function TwinBotChatPage() {
   // Simulate typing effect
   const simulateTyping = (fullResponse: string, messageId: string) => {
     let currentIndex = 0;
-    const typingInterval = 1; // Speed of typing
+    const typingInterval = 0.3; // Speed of typing (3x faster)
+    const charsPerUpdate = 3; // Type multiple characters at once for faster display
     
     const typeNextChar = () => {
       if (currentIndex <= fullResponse.length) {
@@ -355,7 +356,7 @@ export default function TwinBotChatPage() {
           });
         });
         
-        currentIndex++;
+        currentIndex += charsPerUpdate; // Increment by multiple characters
         
         if (currentIndex <= fullResponse.length) {
           typingTimeoutRef.current = setTimeout(typeNextChar, typingInterval);
