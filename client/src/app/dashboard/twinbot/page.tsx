@@ -9,7 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import Sidebar from "@/components/sidebar"
-import { getUser, logout, saveConversationMessage } from "@/lib/api"
+import { getUser, logout, saveConversationMessage, getConversationHistory, checkDatabaseSchema } from "@/lib/api"
 import { sendMessage, createAICalendarEvent, createSimpleCalendarEvent, createNLPCalendarEvent } from "@/lib/ai-api"
 import {
   Bell,
@@ -51,6 +51,7 @@ interface ChatHistory {
   lastMessage: string
   timestamp: Date
   messages: Message[]
+  isDeleting?: boolean
 }
 
 export default function TwinBotChatPage() {
@@ -61,10 +62,10 @@ export default function TwinBotChatPage() {
   const [inputValue, setInputValue] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [user, setUser] = useState<{ id: string; email: string; name?: string } | null>(null)
-  const [activeChatId, setActiveChatId] = useState<string>("1")
+  const [activeChatId, setActiveChatId] = useState<string>("default_chat")
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: "1",
+      id: "welcome_initial",
       content: "Hello! I'm your TwinBot assistant. How can I help you today?",
       isUser: false,
       timestamp: new Date(),
@@ -72,13 +73,13 @@ export default function TwinBotChatPage() {
   ])
   const [chatHistory, setChatHistory] = useState<ChatHistory[]>([
     {
-      id: "1",
+      id: "default_chat",
       title: "Getting Started",
       lastMessage: "Hello! I'm your TwinBot assistant.",
       timestamp: new Date(),
       messages: [
         {
-          id: "1",
+          id: "welcome_initial",
           content: "Hello! I'm your TwinBot assistant. How can I help you today?",
           isUser: false,
           timestamp: new Date(),
@@ -86,11 +87,25 @@ export default function TwinBotChatPage() {
       ]
     }
   ])
+  const [showSchemaBanner, setShowSchemaBanner] = useState(false)
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const profileRef = useRef<HTMLDivElement>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
+
+  const [error, setError] = useState<string | null>(null);
+  
+  // Clear error after 5 seconds
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => {
+        setError(null);
+      }, 5000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
 
   // Check screen size and set mobile view
   useEffect(() => {
@@ -116,37 +131,43 @@ export default function TwinBotChatPage() {
     }
   }, [])
 
+  // Load user and chat history from Supabase
   useEffect(() => {
     // Get the current user
     const currentUser = getUser()
     if (currentUser) {
       setUser(currentUser)
-    }
-
-    // Load chat history from localStorage if available
-    const savedChatHistory = localStorage.getItem('twinbot_chat_history')
-    if (savedChatHistory) {
-      try {
-        const parsed = JSON.parse(savedChatHistory)
-        // Convert string timestamps back to Date objects
-        const processedHistory = parsed.map((chat: any) => ({
-          ...chat,
-          timestamp: new Date(chat.timestamp),
-          messages: chat.messages.map((msg: any) => ({
-            ...msg,
-            timestamp: new Date(msg.timestamp)
-          }))
-        }))
-        setChatHistory(processedHistory)
-        
-        // Set active chat and messages if we have a history
-        if (processedHistory.length > 0) {
-          setActiveChatId(processedHistory[0].id)
-          setMessages(processedHistory[0].messages)
+      
+      // Check database schema
+      checkDatabaseSchema().then(result => {
+        if (!result.isValid) {
+          console.warn('Database schema issues detected:', result.missing);
+          setShowSchemaBanner(true);
         }
-      } catch (e) {
-        console.error("Error parsing chat history:", e)
+      }).catch(error => {
+        console.error('Error checking database schema:', error);
+      });
+      
+      // Check if this is a new login session
+      const lastSessionTime = localStorage.getItem('last_session_time')
+      const currentTime = Date.now()
+      const SESSION_TIMEOUT = 30 * 60 * 1000 // 30 minutes
+      
+      if (!lastSessionTime || (currentTime - parseInt(lastSessionTime)) > SESSION_TIMEOUT) {
+        // If it's a new session, create a new chat after loading history
+        fetchConversationHistory().then(() => {
+          createNewChat()
+        })
+      } else {
+        // Otherwise, just load existing conversations
+        fetchConversationHistory()
       }
+      
+      // Update the session time
+      localStorage.setItem('last_session_time', currentTime.toString())
+    } else {
+      // If no user, just use default welcome message
+      console.log('No user found, using default welcome message')
     }
 
     return () => {
@@ -157,18 +178,162 @@ export default function TwinBotChatPage() {
     }
   }, [])
 
-  // Save chat history to localStorage when it changes
-  useEffect(() => {
-    localStorage.setItem('twinbot_chat_history', JSON.stringify(chatHistory))
-  }, [chatHistory])
+  // Add a reference for the scroll area
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
 
+  // Custom scroll behavior that prevents initial automatic scrolling
+  useEffect(() => {
+    // Only scroll to bottom on new messages, not on initial load
+    if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      // Check if id exists and is a string before calling startsWith
+      if (lastMessage && typeof lastMessage.id === 'string' && lastMessage.id.startsWith('typing_')) {
+        scrollToBottom();
+      }
+    }
+  }, [messages])
+
+  // Scroll to bottom function that uses the ScrollArea ref
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" })
+    }
   }
 
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+  // Fetch conversation history from Supabase
+  const fetchConversationHistory = async (limit = 100, offset = 0) => {
+    // Show loading state
+    setIsLoading(true)
+    
+    try {
+      // Fetch conversation history from the server
+      const result = await getConversationHistory(limit, offset)
+      
+      if (result.success && result.history && result.history.length > 0) {
+        console.log(`Successfully loaded conversation history: ${result.count} messages`)
+        
+        // Group messages by conversation_id or timestamp if conversation_id is not available
+        const conversationsMap = new Map<string, Message[]>()
+        
+        // Process messages and convert to our Message interface
+        result.history.forEach(msg => {
+          try {
+            // Use conversation_id if available, otherwise use timestamp to group messages
+            // This is a temporary workaround until the conversation_id column is added
+            const conversationId = 
+              (msg.conversation_id) || 
+              (msg.metadata && msg.metadata.conversationId) || 
+              `conv_${new Date(msg.timestamp).getTime()}`;
+            
+            if (!conversationsMap.has(conversationId)) {
+              conversationsMap.set(conversationId, [])
+            }
+            
+            // Convert database message to our Message interface
+            const formattedMessage: Message = {
+              id: typeof msg.id === 'string' ? msg.id : `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              content: msg.message,
+              isUser: msg.source === 'user',
+              timestamp: new Date(msg.timestamp),
+              // If there's calendar event data in metadata, add it
+              calendarEvent: msg.metadata?.calendarEvent || undefined
+            }
+            
+            conversationsMap.get(conversationId)?.push(formattedMessage)
+          } catch (msgError) {
+            console.error('Error processing message:', msgError, msg);
+            // Skip this message but continue processing others
+          }
+        })
+        
+        // Convert to our ChatHistory format
+        const newChatHistory: ChatHistory[] = []
+        
+        conversationsMap.forEach((messages, convId) => {
+          // Skip empty conversations or ones with just a welcome message
+          if (messages.length <= 1 && !messages.some(m => m.isUser)) {
+            return
+          }
+          
+          try {
+            // Sort messages by timestamp
+            messages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+            
+            // Get the last message for preview
+            const lastMessage = messages[messages.length - 1]
+            
+            // Generate a title from the first user message or use a default
+            const firstUserMessage = messages.find(m => m.isUser)
+            const title = firstUserMessage 
+              ? firstUserMessage.content.substring(0, 30) + (firstUserMessage.content.length > 30 ? '...' : '')
+              : 'Conversation ' + convId
+              
+            newChatHistory.push({
+              id: convId,
+              title,
+              lastMessage: lastMessage.content.substring(0, 40) + (lastMessage.content.length > 40 ? '...' : ''),
+              timestamp: lastMessage.timestamp,
+              messages
+            })
+          } catch (convError) {
+            console.error('Error processing conversation:', convError, convId);
+            // Skip this conversation but continue with others
+          }
+        })
+        
+        // Sort conversations by most recent message
+        newChatHistory.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+        
+        if (newChatHistory.length > 0) {
+          // Update state with loaded conversations
+          setChatHistory(newChatHistory)
+          
+          // Set active chat to the most recent one but don't immediately scroll to bottom
+          setActiveChatId(newChatHistory[0].id)
+          setMessages(newChatHistory[0].messages)
+          
+          // Also save to localStorage as backup
+          localStorage.setItem('twinbot_chat_history', JSON.stringify(newChatHistory))
+        } else {
+          // If no valid conversations were found, load the default welcome message
+          console.log('No valid conversations found, using default welcome message')
+          createNewChat()
+        }
+        
+        // Check if we need to load more messages (if the result count is equal to our limit)
+        if (result.count === limit) {
+          console.log(`Retrieved maximum messages (${limit}), there may be more history available`)
+          // You could implement "load more" functionality here
+        }
+      } else {
+        // If error is related to missing conversation_id column
+        if (result.error && 
+            (result.error.includes('conversation_id') || 
+             result.error.includes('column') || 
+             result.error.includes('schema'))) {
+          console.warn('Database schema issue detected. You may need to run the SQL migration.');
+          // Set the banner state to true
+          setShowSchemaBanner(true);
+          // Create a new chat to ensure the app is still functional
+          createNewChat();
+        } else if (result.error) {
+          console.error('Error fetching conversation history:', result.error)
+        } else {
+          console.log('No conversation history found')
+          createNewChat()
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching conversation history:', error)
+      // Create a new chat to ensure the app is still functional
+      createNewChat()
+    } finally {
+      setIsLoading(false)
+    }
+    
+    // Return a promise for chaining
+    return Promise.resolve()
+  }
 
   // Simulate typing effect
   const simulateTyping = (fullResponse: string, messageId: string) => {
@@ -278,280 +443,314 @@ export default function TwinBotChatPage() {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!inputValue.trim() || isLoading || !user) return
-
-    // Add user message
+    
+    if (!inputValue.trim() || isLoading) return
+    
+    // Disable input while processing
+    setIsLoading(true)
+    
+    // Generate a unique ID for the message
+    const userMessageId = `user_${Date.now().toString()}`
+    
+    // Get the current active chat
+    const activeChat = chatHistory.find(chat => chat.id === activeChatId)
+    
+    // Generate a conversation ID if needed
+    let currentConversationId = activeChatId
+    if (!activeChat || activeChat.id === "default_chat") {
+      // Generate a new conversation ID if this is the default chat
+      currentConversationId = `conv_${Date.now()}`
+      setActiveChatId(currentConversationId)
+    }
+    
+    // Prepare user message
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: userMessageId,
       content: inputValue,
       isUser: true,
       timestamp: new Date(),
     }
     
-    const updatedMessages = [...messages, userMessage]
-    setMessages(updatedMessages)
+    // Add user message to UI
+    setMessages(prev => [...prev, userMessage])
+    
+    // Clear input
     setInputValue("")
-    setIsLoading(true)
-
+    
     try {
-      // Update the saveConversationMessage call for the user message
-      try {
-        console.log("Saving user message to database:", userMessage.content.substring(0, 50) + (userMessage.content.length > 50 ? "..." : ""));
-        const saveResult = await saveConversationMessage(
-          userMessage.content,
-          'user',
-          { 
-            conversationId: activeChatId,
-            timestamp: userMessage.timestamp.toISOString()
-          }
-        );
-        
-        if (!saveResult.success) {
-          console.warn("Failed to save user message:", saveResult.error);
-          // Continue with the chat flow even if saving fails
-        } else {
-          console.log("User message saved successfully with ID:", saveResult.id);
+      // Save user message to Supabase
+      const saveResult = await saveConversationMessage(
+        userMessage.content,
+        'user',
+        {
+          conversationId: currentConversationId,
+          timestamp: userMessage.timestamp.toISOString(),
         }
-      } catch (saveError) {
-        console.error("Error saving user message:", saveError);
-        // Continue with the chat flow even if saving fails
+      )
+      
+      if (!saveResult.success) {
+        console.error('Failed to save user message to database:', saveResult.error)
+        
+        // Check if this is a schema-related error
+        if (saveResult.error && 
+            (saveResult.error.includes('conversation_id') || 
+             saveResult.error.includes('column') || 
+             saveResult.error.includes('schema'))) {
+          console.warn('Database schema issue detected. You may need to run the SQL migration.');
+          // Set the banner state to true
+          setShowSchemaBanner(true);
+          // Continue with the conversation in memory only - don't block the user
+        }
       }
       
-      // Add initial AI message with typing state
-      const botMessageId = `bot-${Date.now()}`
-      const initialBotMessage: Message = {
-        id: botMessageId,
-        content: "",
+      // Check if it's a calendar event request
+      const isCalendarRequest = checkIfCalendarEventRequest(inputValue)
+      
+      // Generate AI response
+      let aiResponseText: string
+      
+      if (isCalendarRequest) {
+        try {
+          // Use special calendar event creation logic
+          const eventDetails = await createNLPCalendarEvent(inputValue, user?.id || 'anonymous')
+          
+          if (eventDetails && eventDetails.event) {
+            // Extract event information from the response
+            const eventName = eventDetails.eventDetails?.eventName || eventDetails.event.summary
+            const eventDate = eventDetails.eventDetails?.eventDate || new Date(eventDetails.event.start.dateTime).toLocaleDateString()
+            const eventTime = eventDetails.eventDetails?.eventTime || new Date(eventDetails.event.start.dateTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+            
+            aiResponseText = eventDetails.message || 
+              `✅ I've created a calendar event:\n\n**${eventName}**\nDate: ${eventDate}\nTime: ${eventTime}\n\n${eventDetails.event.htmlLink ? `[View in Calendar](${eventDetails.event.htmlLink})` : ''}`
+          } else {
+            aiResponseText = eventDetails?.message || 
+              `I couldn't create the calendar event automatically. Please try again with more details about the date, time, and event name.`
+          }
+        } catch (calendarError) {
+          console.error('Calendar event creation error:', calendarError)
+          aiResponseText = calendarError instanceof Error ? 
+            `I had trouble creating your calendar event: ${calendarError.message}` : 
+            "I had trouble creating your calendar event. Could you please provide more details about when you'd like to schedule it?"
+        }
+      } else {
+        try {
+          // Standard AI response
+          const response = await sendMessage(inputValue, user?.id || 'anonymous')
+          
+          // Handle different response formats
+          if (typeof response === 'string') {
+            aiResponseText = response
+          } else if (response && typeof response === 'object') {
+            // Try to extract the response property
+            const responseObj = response as any
+            if (responseObj.response) {
+              aiResponseText = responseObj.response
+            } else if (responseObj.message) {
+              aiResponseText = responseObj.message
+            } else {
+              aiResponseText = String(response)
+            }
+          } else {
+            aiResponseText = String(response)
+          }
+        } catch (aiError) {
+          console.error('AI response error:', aiError)
+          aiResponseText = aiError instanceof Error ? 
+            `I'm having trouble connecting to my brain right now: ${aiError.message}` : 
+            "I'm having trouble connecting to my brain right now. Could you try again in a moment?"
+        }
+      }
+      
+      // Generate AI message object
+      const aiMessage: Message = {
+        id: `ai_${Date.now().toString()}`,
+        content: aiResponseText,
+        isUser: false,
+        timestamp: new Date(),
+      }
+      
+      // Check if the response contains calendar event information
+      if (isCalendarRequest) {
+        try {
+          // For calendar event requests, try to extract from the response
+          const eventDetails = extractEventFromAIResponse(aiResponseText)
+          if (eventDetails) {
+            aiMessage.calendarEvent = {
+              name: eventDetails.title,
+              date: eventDetails.date,
+              time: eventDetails.time
+            }
+          }
+        } catch (error) {
+          console.error('Error extracting calendar event details:', error)
+        }
+      }
+      
+      // Add AI response with typing effect
+      const typingMessageId = `typing_${Date.now().toString()}`
+      setMessages(prev => [...prev, {
+        id: typingMessageId,
+        content: '',
         isUser: false,
         timestamp: new Date(),
         isTyping: true,
-        typingContent: ""
-      }
+        typingContent: ''
+      }])
       
-      setMessages([...updatedMessages, initialBotMessage])
-
-      // Check if message is a calendar event creation request
-      const isCalendarRequest = checkIfCalendarEventRequest(userMessage.content)
+      // Start typing effect
+      simulateTyping(aiResponseText, typingMessageId)
       
-      let response = ""
-      
-      try {
-        if (isCalendarRequest) {
-          console.log("Detected calendar event request:", userMessage.content);
-          try {
-            // Use the enhanced NLP calendar event creation
-            const eventResult = await createNLPCalendarEvent(userMessage.content, user.id)
-            
-            console.log("Calendar event creation response:", eventResult);
-            
-            // If we have extracted event details, include them in the response
-            if (eventResult.eventDetails) {
-              const { eventName, eventDate, eventTime } = eventResult.eventDetails
-              response = eventResult.message || `I've added "${eventName}" to your calendar on ${eventDate} at ${eventTime}.`
-              
-              // Add calendar event details to the message for display
-              const calendarEventData = {
-                name: eventName,
-                date: eventDate,
-                time: eventTime,
-                link: eventResult.event?.htmlLink
-              }
-              
-              // Update the bot message with calendar event data
-              initialBotMessage.calendarEvent = calendarEventData
-            } else {
-              response = eventResult.message || "I've created that calendar event for you."
-            }
-            
-            // Debug log the successful result
-            console.log("Calendar event created successfully:", eventResult);
-          } catch (calendarError: any) {
-            console.error("Calendar event creation error:", calendarError)
-            
-            // Check if it's an authentication error
-            if (calendarError.message?.includes('Authentication') || 
-                calendarError.message?.includes('session has expired') ||
-                calendarError.message?.includes('log in again')) {
-              // Authentication error - redirect to login
-              logout();
-              router.push('/login?session_expired=true');
-              return;
-            }
-            
-            // Set error in the message for UI display
-            initialBotMessage.error = calendarError.message || 'Unknown error creating calendar event'
-            
-            // If we have a specific message from the server, use it
-            if (calendarError.message && calendarError.message.includes('details":')){
-              try {
-                // Try to extract the message from the error
-                const errorData = JSON.parse(calendarError.message.substring(calendarError.message.indexOf('{')));
-                if (errorData.message) {
-                  response = errorData.message;
-                } else {
-                  response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
-                }
-              } catch (parseError) {
-                response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
-              }
-            } else if (calendarError.message?.includes('Google Calendar authentication required')) {
-              response = "I'd like to create that calendar event for you, but you need to connect to Google Calendar first. Please go to the Calendar page and connect your account.";
-            } else {
-              response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
-            }
-          }
-        } else {
-          // Normal chat response
-          response = await sendMessage(userMessage.content, user.id)
+      // Save AI message to Supabase with proper metadata
+      const aiSaveResult = await saveConversationMessage(
+        aiResponseText,
+        'assistant',
+        {
+          conversationId: currentConversationId,
+          timestamp: aiMessage.timestamp.toISOString(),
+          calendarEvent: aiMessage.calendarEvent,
+          isCalendarEvent: isCalendarRequest
         }
-      } catch (aiError: any) {
-        console.error("Error getting AI response:", aiError);
-        
-        // Check if it's an authentication error
-        if (aiError.message?.includes('Authentication') || 
-            aiError.message?.includes('session has expired') ||
-            aiError.message?.includes('log in again')) {
-          // Authentication error - redirect to login
-          logout();
-          router.push('/login?session_expired=true');
-          return;
-        }
-        
-        response = "Sorry, I'm having trouble connecting right now. Please try again later.";
-      }
+      )
       
-      // Update the saveConversationMessage call for the assistant message
-      try {
-        console.log("Saving assistant message to database:", response.substring(0, 50) + (response.length > 50 ? "..." : ""));
-        const saveResult = await saveConversationMessage(
-          response,
-          'assistant',
-          {
-            conversationId: activeChatId,
-            isCalendarEvent: isCalendarRequest,
-            hasError: !!initialBotMessage.error,
-            calendarEventDetails: initialBotMessage.calendarEvent,
-            timestamp: new Date().toISOString()
-          }
-        );
+      if (!aiSaveResult.success) {
+        console.error('Failed to save AI message to database:', aiSaveResult.error)
         
-        if (!saveResult.success) {
-          console.warn("Failed to save assistant message:", saveResult.error);
-        } else {
-          console.log("Assistant message saved successfully with ID:", saveResult.id);
-        }
-      } catch (saveError) {
-        console.error("Error saving assistant message:", saveError);
-      }
-      
-      // Check if the response contains calendar event confirmation
-      if (!isCalendarRequest && response.includes("scheduled")) {
-        console.log("AI response contains calendar event confirmation, but wasn't processed as a calendar request:", response);
-        // Try to extract event details from the AI response
-        const extractedEvent = extractEventFromAIResponse(response);
-        
-        if (extractedEvent) {
-          console.log("Extracted event details from AI response:", extractedEvent);
-          
-          try {
-            // Try to create the calendar event directly with the extracted details
-            const success = await createCalendarEventDirectly(
-              extractedEvent.title,
-              extractedEvent.date,
-              extractedEvent.time
-            );
-            
-            if (success) {
-              console.log("Successfully created calendar event directly");
-              response += `\n\nI've added this event to your calendar.`;
-            } else {
-              console.log("Failed to create calendar event directly");
-              
-              // Fall back to using the API through createSimpleCalendarEvent
-              const explicitEventMessage = `Create a calendar event titled "${extractedEvent.title}" on ${extractedEvent.date} at ${extractedEvent.time}`;
-              console.log("Falling back to createSimpleCalendarEvent with message:", explicitEventMessage);
-              
-              try {
-                const eventResult = await createSimpleCalendarEvent(explicitEventMessage, user.id);
-                console.log("Calendar event creation through fallback:", eventResult);
-                
-                if (eventResult.event && eventResult.event.htmlLink) {
-                  response += `\n\nI've added this event to your calendar. [View in Google Calendar](${eventResult.event.htmlLink})`;
-                }
-              } catch (fallbackError) {
-                console.error("Both direct and fallback calendar creation failed:", fallbackError);
-                response += "\n\n(Note: I tried to add this to your calendar but encountered an issue. Please try asking me explicitly to create this event.)";
-              }
-            }
-          } catch (error) {
-            console.error("Error in calendar event creation workflow:", error);
-            response += "\n\n(Note: I tried to add this to your calendar but encountered an issue. Please try asking me explicitly to create this event.)";
-          }
+        // Check if this is a schema-related error
+        if (aiSaveResult.error && 
+            (aiSaveResult.error.includes('conversation_id') || 
+             aiSaveResult.error.includes('column') || 
+             aiSaveResult.error.includes('schema'))) {
+          console.warn('Database schema issue detected. You may need to run the SQL migration.');
+          // Set the banner state to true
+          setShowSchemaBanner(true);
+          // Just continue with the conversation in memory only
         }
       }
       
-      // Simulate typing effect with the actual response
-      simulateTyping(response, botMessageId)
-      
-      // Update active chat in history with final message once typing is complete
-      const finalBotMessage: Message = {
-        id: botMessageId,
-        content: response,
-        isUser: false,
-        timestamp: new Date(),
-      }
-      
-      const finalMessages = [...updatedMessages, finalBotMessage]
-      
-      // Update chat history
+      // Update chat history with new messages
       setChatHistory(prev => {
-        const updatedHistory = prev.map(chat => 
-          chat.id === activeChatId 
-            ? {
-                ...chat, 
-                messages: finalMessages,
-                lastMessage: response.slice(0, 30) + (response.length > 30 ? "..." : ""),
-                timestamp: new Date()
-              }
-            : chat
-        )
-        return updatedHistory
+        const chatIndex = prev.findIndex(chat => chat.id === currentConversationId)
+        
+        if (chatIndex >= 0) {
+          // Update existing chat
+          const updatedHistory = [...prev]
+          const chat = { ...updatedHistory[chatIndex] }
+          
+          // Add the new messages
+          chat.messages = [...chat.messages, userMessage, aiMessage]
+          chat.lastMessage = aiMessage.content.substring(0, 40) + (aiMessage.content.length > 40 ? '...' : '')
+          chat.timestamp = aiMessage.timestamp
+          
+          updatedHistory[chatIndex] = chat
+          return updatedHistory
+        } else {
+          // Create a new chat history entry
+          return [
+            {
+              id: currentConversationId,
+              title: inputValue.substring(0, 30) + (inputValue.length > 30 ? '...' : ''),
+              lastMessage: aiResponseText.substring(0, 40) + (aiResponseText.length > 40 ? '...' : ''),
+              timestamp: aiMessage.timestamp,
+              messages: [
+                // Include the default welcome message if we're creating a totally new chat
+                ...(currentConversationId !== activeChatId ? [{
+                  id: "welcome_" + Date.now().toString(),
+                  content: "Hello! I'm your TwinBot assistant. How can I help you today?",
+                  isUser: false,
+                  timestamp: new Date(),
+                }] : []),
+                userMessage,
+                aiMessage
+              ]
+            },
+            ...prev.filter(chat => chat.id !== "default_chat") // Remove the default chat once we have a real one
+          ]
+        }
       })
     } catch (error) {
-      console.error("Error sending message:", error)
+      console.error('Error in message exchange:', error)
       
-      // Add error message
-      setMessages(updatedMessages.concat([{
-        id: Date.now().toString(),
-        content: "Sorry, I encountered an error. Please try again.",
-        isUser: false,
-        timestamp: new Date(),
-      }]))
+      // Show error message
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `error_${Date.now().toString()}`,
+          content: "Sorry, I encountered an error. Please try again.",
+          isUser: false,
+          timestamp: new Date(),
+          error: error instanceof Error ? error.message : String(error)
+        }
+      ])
     } finally {
       setIsLoading(false)
     }
   }
 
   const createNewChat = () => {
-    const newChatId = Date.now().toString()
-    const initialMessage = {
-      id: Date.now().toString(),
+    // Generate a unique ID for the new chat
+    const newChatId = `conv_${Date.now()}`
+    
+    // Create welcome message
+    const welcomeMessage: Message = {
+      id: "welcome_" + Date.now().toString(),
       content: "Hello! I'm your TwinBot assistant. How can I help you today?",
       isUser: false,
       timestamp: new Date(),
     }
     
-    const newChat: ChatHistory = {
-      id: newChatId,
-      title: "New Conversation",
-      lastMessage: initialMessage.content,
-      timestamp: new Date(),
-      messages: [initialMessage]
+    // Add new chat to chat history
+    setChatHistory(prev => [
+      {
+        id: newChatId,
+        title: "New Conversation",
+        lastMessage: welcomeMessage.content,
+        timestamp: welcomeMessage.timestamp,
+        messages: [welcomeMessage]
+      },
+      ...prev.filter(chat => chat.id !== "default_chat") // Filter out the default chat if it exists
+    ])
+    
+    // Set the new chat as active
+    setActiveChatId(newChatId)
+    setMessages([welcomeMessage])
+    
+    // Save welcome message to Supabase
+    saveConversationMessage(
+      welcomeMessage.content,
+      'assistant',
+      {
+        conversationId: newChatId,
+        timestamp: welcomeMessage.timestamp.toISOString(),
+        isWelcomeMessage: true
+      }
+    ).then(result => {
+      if (!result.success) {
+        console.error('Failed to save welcome message to database:', result.error);
+        
+        // Check if this is a schema-related error
+        if (result.error && 
+           (result.error.includes('conversation_id') || 
+            result.error.includes('column') || 
+            result.error.includes('schema'))) {
+          console.warn('Database schema issue detected. You may need to run the SQL migration.');
+          // Set the banner state to true
+          setShowSchemaBanner(true);
+          // Just continue with the conversation in memory only
+        }
+      }
+    }).catch(error => {
+      console.error('Failed to save welcome message to database:', error)
+    })
+    
+    // Close the chat history sidebar on mobile
+    if (mobileView) {
+      setIsChatHistoryOpen(false)
     }
     
-    setChatHistory(prev => [newChat, ...prev])
-    setActiveChatId(newChatId)
-    setMessages([initialMessage])
+    // Need a small delay to ensure the DOM has updated before scrolling
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "auto" })
+    }, 100)
   }
 
   const switchToChat = (chatId: string) => {
@@ -559,12 +758,114 @@ export default function TwinBotChatPage() {
     if (chat) {
       setActiveChatId(chatId)
       setMessages(chat.messages)
+      
+      // Close the chat history sidebar on mobile
+      if (mobileView) {
+        setIsChatHistoryOpen(false)
+      }
+      
+      // Need a small delay to ensure the DOM has updated before scrolling
+      setTimeout(() => {
+        if (chat.messages.length > 0) {
+          messagesEndRef.current?.scrollIntoView({ behavior: "auto" })
+        }
+      }, 100)
     }
   }
 
-  const deleteChat = (chatId: string, e: React.MouseEvent) => {
+  const deleteChat = async (chatId: string, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent also triggering the click on the chat item
     
+    // Set loading state so user can't interact during deletion
+    setIsLoading(true)
+    
+    // Find the chat to mark as deleting
+    setChatHistory(prev => prev.map(chat => 
+      chat.id === chatId ? { ...chat, isDeleting: true } : chat
+    ))
+    
+    try {
+      // Get authentication token from localStorage
+      const session = localStorage.getItem('session')
+      if (!session) {
+        throw new Error('Authentication session not found')
+      }
+      
+      const parsedSession = JSON.parse(session)
+      if (!parsedSession.access_token) {
+        throw new Error('Authentication token not found')
+      }
+      
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002'
+      console.log(`Deleting conversation ${chatId} via API: ${API_URL}/api/conversations/delete`)
+      
+      // Make the delete request to the server
+      const response = await fetch(`${API_URL}/api/conversations/delete`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${parsedSession.access_token}`
+        },
+        body: JSON.stringify({
+          conversationId: chatId
+        })
+      })
+      
+      const responseText = await response.text()
+      console.log(`Delete response status: ${response.status}, body:`, responseText)
+      
+      if (!response.ok) {
+        // Log the complete error information
+        console.error(`Failed to delete conversation from database. Status: ${response.status}, Response:`, responseText)
+        
+        // Show error toast or notification here
+        let errorMessage = 'Failed to delete conversation';
+        
+        try {
+          // Try to parse the response as JSON
+          const errorData = JSON.parse(responseText);
+          if (errorData && errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (parseError) {
+          // If parsing fails, use the response text or a generic message
+          if (responseText && responseText.length < 100) {
+            errorMessage = `Server error: ${responseText}`;
+          } else if (response.status === 401) {
+            errorMessage = 'Authentication required. Please log in again.';
+          } else if (response.status === 404) {
+            errorMessage = 'Delete endpoint not found. Server may need to be updated.';
+          }
+        }
+        
+        // Remove deleting status but keep the chat
+        setChatHistory(prev => prev.map(chat => 
+          chat.id === chatId ? { ...chat, isDeleting: false } : chat
+        ))
+        
+        // Set error message
+        setError(`Error deleting chat: ${errorMessage}`);
+        
+        setIsLoading(false)
+        return // Don't continue with UI deletion
+      }
+    } catch (error) {
+      console.error('Error deleting conversation from database:', error)
+      
+      // Remove deleting status but keep the chat
+      setChatHistory(prev => prev.map(chat => 
+        chat.id === chatId ? { ...chat, isDeleting: false } : chat
+      ))
+      
+      // Set error message
+      setError(`Error deleting chat: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      setIsLoading(false)
+      return // Don't continue with UI deletion
+    }
+    
+    // If we got here, deletion was successful
+    // Update the UI state
     const updatedHistory = chatHistory.filter(chat => chat.id !== chatId)
     setChatHistory(updatedHistory)
     
@@ -578,6 +879,9 @@ export default function TwinBotChatPage() {
         createNewChat()
       }
     }
+    
+    // Finish loading state
+    setIsLoading(false)
   }
 
   const getUserInitials = () => {
@@ -689,6 +993,8 @@ export default function TwinBotChatPage() {
 
   // Extract event details from AI responses that contain event confirmations
   const extractEventFromAIResponse = (message: string): { title: string, date: string, time: string } | null => {
+    if (!message) return null;
+    
     // Pattern for "Team discussion scheduled: 2025-03-28, 15:00"
     const scheduledPattern = /(.+?)\s+scheduled:\s+(\d{4}-\d{2}-\d{2}),\s+(\d{2}:\d{2})/i;
     const scheduledMatch = message.match(scheduledPattern);
@@ -702,26 +1008,38 @@ export default function TwinBotChatPage() {
     }
     
     // Pattern for "I've created an event 'X' for you on <date> at <time>"
-    const createdPattern = /created\s+(?:an\s+)?event\s+(?:"|'|")(.+?)(?:"|'|")\s+.*?on\s+(\d{4}-\d{2}-\d{2}|\w+\s+\d{1,2}(?:st|nd|rd|th)?)\s+at\s+(\d{1,2}:\d{2}\s*(?:am|pm)?)/i;
+    const createdPattern = /created\s+(?:an\s+)?event\s+(?:"|'|")(.+?)(?:"|'|")\s+.*?on\s+([a-zA-Z0-9 ,\-]+)\s+at\s+([a-zA-Z0-9: ]+(?:am|pm)?)/i;
     const createdMatch = message.match(createdPattern);
     
     if (createdMatch) {
       return {
         title: createdMatch[1].trim(),
-        date: createdMatch[2],
-        time: createdMatch[3]
+        date: createdMatch[2].trim(),
+        time: createdMatch[3].trim()
       };
     }
     
     // Pattern for "I've added 'X' to your calendar on <date> at <time>"
-    const addedPattern = /added\s+(?:"|'|")(.+?)(?:"|'|")\s+to\s+your\s+calendar\s+on\s+(\d{4}-\d{2}-\d{2}|\w+\s+\d{1,2}(?:st|nd|rd|th)?)\s+at\s+(\d{1,2}:\d{2}\s*(?:am|pm)?)/i;
+    const addedPattern = /added\s+(?:"|'|")(.+?)(?:"|'|")\s+to\s+your\s+calendar\s+on\s+([a-zA-Z0-9 ,\-]+)\s+at\s+([a-zA-Z0-9: ]+(?:am|pm)?)/i;
     const addedMatch = message.match(addedPattern);
     
     if (addedMatch) {
       return {
         title: addedMatch[1].trim(),
-        date: addedMatch[2],
-        time: addedMatch[3]
+        date: addedMatch[2].trim(),
+        time: addedMatch[3].trim()
+      };
+    }
+    
+    // Pattern for "I've created a calendar event: **Event Name** Date: date Time: time"
+    const formattedPattern = /created\s+a\s+calendar\s+event:[\s\S]*?\*\*(.+?)\*\*[\s\S]*?Date:\s+([a-zA-Z0-9 ,\-\/]+)[\s\S]*?Time:\s+([a-zA-Z0-9: ]+(?:am|pm)?)/i;
+    const formattedMatch = message.match(formattedPattern);
+    
+    if (formattedMatch) {
+      return {
+        title: formattedMatch[1].trim(),
+        date: formattedMatch[2].trim(),
+        time: formattedMatch[3].trim()
       };
     }
     
@@ -829,7 +1147,7 @@ export default function TwinBotChatPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#242123]">
-      {/* Main Sidebar - keep original behavior */}
+      {/* Sidebar */}
       <Sidebar activePage="chat" />
 
       {/* Main Chat Area */}
@@ -855,7 +1173,7 @@ export default function TwinBotChatPage() {
               <span className="absolute top-1 right-1 h-2 w-2 bg-[#3ecf8e] rounded-full"></span>
             </button>
             <div className="relative" ref={profileRef}>
-              <button 
+              <button
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
                 className="flex items-center hover:bg-[#272727] p-1 rounded-md transition-colors"
               >
@@ -864,7 +1182,7 @@ export default function TwinBotChatPage() {
                 </Avatar>
                 <ChevronDown className={`h-4 w-4 ml-1 text-gray-400 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
               </button>
-              
+
               {isProfileOpen && (
                 <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-[#1c1c1c] ring-1 ring-black ring-opacity-5 z-50">
                   <div className="px-4 py-2 border-b border-gray-800">
@@ -885,7 +1203,7 @@ export default function TwinBotChatPage() {
                     <Settings className="h-4 w-4 mr-2" />
                     Settings
                   </Link>
-                  <button 
+                  <button
                     onClick={handleLogout}
                     className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[#272727] hover:text-white flex items-center"
                   >
@@ -898,11 +1216,63 @@ export default function TwinBotChatPage() {
           </div>
         </header>
 
+        {/* Schema Migration Banner */}
+        {showSchemaBanner && (
+          <div className="px-4 py-3 w-full bg-amber-500 text-black">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center">
+                <span className="font-bold mr-2">⚠️ Database Schema Update Required</span>
+                <span>Your chat history may not save properly until a database update is applied.</span>
+              </div>
+              <button 
+                onClick={() => setShowSchemaBanner(false)}
+                className="ml-4 text-black hover:text-gray-800"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm mt-1">
+              The <code className="bg-amber-600 px-1 rounded text-white">conversation_id</code> column is missing 
+              from your database. Please run the migration SQL from 
+              <a 
+                href="/migrations/migrate.html" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-blue-900 hover:text-blue-700 mx-1 underline"
+              >
+                the migration page
+              </a>
+              or contact your administrator.
+            </p>
+            <p className="text-xs mt-2">
+              <strong>Don't worry!</strong> Your conversations will still work, but changes may not be saved permanently until the issue is fixed.
+            </p>
+          </div>
+        )}
+
+        {/* Error Banner */}
+        {error && (
+          <div className="px-4 py-3 w-full bg-red-500/80 text-white">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center">
+                <span className="font-bold mr-2">⚠️ Error</span>
+                <span>{error}</span>
+              </div>
+              <button 
+                onClick={() => setError(null)}
+                className="ml-4 text-white hover:text-gray-100"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Chat Interface with Dynamic Width */}
         <div className="flex-1 flex overflow-hidden relative">
           {/* Messages Area */}
           <div className="flex-1 flex flex-col h-full overflow-hidden bg-gradient-to-b from-[#121212] to-[#1a1a1a]">
-            <ScrollArea className="flex-1 py-2 w-full">
+            <ScrollArea className="flex-1 py-2 w-full" ref={scrollAreaRef}>
               <div className="space-y-4 w-full px-4">
                 {messages.map((message) => (
                   <div
@@ -1014,23 +1384,22 @@ export default function TwinBotChatPage() {
                       onClick={() => switchToChat(chat.id)}
                       className={`group w-full text-left p-2 rounded-md hover:bg-[#272727] cursor-pointer transition-colors ${
                         activeChatId === chat.id ? 'bg-[#272727]' : ''
-                      }`}
+                      } ${chat.isDeleting ? 'opacity-60' : ''}`}
                     >
                       <div className="flex items-start">
                         <MessageSquare className={`h-3.5 w-3.5 mr-2 mt-0.5 ${activeChatId === chat.id ? 'text-[#3ecf8e]' : 'text-gray-400'}`} />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-white truncate">
-                            {chat.title}
+                            {chat.isDeleting ? 'Deleting...' : chat.title}
                           </p>
                           <p className="text-[10px] text-gray-400 truncate">
-                            {chat.lastMessage}
+                            {chat.isDeleting ? '' : chat.lastMessage}
                           </p>
                           <p className="text-[10px] text-gray-500 mt-0.5">
-                            {chat.timestamp.toLocaleDateString()} at{" "}
-                            {chat.timestamp.toLocaleTimeString([], {
+                            {chat.isDeleting ? '' : `${chat.timestamp.toLocaleDateString()} at ${chat.timestamp.toLocaleTimeString([], {
                               hour: "2-digit",
                               minute: "2-digit",
-                            })}
+                            })}`}
                           </p>
                         </div>
                         <Button
@@ -1038,6 +1407,7 @@ export default function TwinBotChatPage() {
                           size="sm"
                           className="p-1 h-auto text-gray-500 hover:text-red-400 hover:bg-transparent opacity-0 group-hover:opacity-100"
                           onClick={(e) => deleteChat(chat.id, e)}
+                          disabled={chat.isDeleting}
                         >
                           <Trash className="h-3 w-3" />
                         </Button>
@@ -1057,7 +1427,7 @@ export default function TwinBotChatPage() {
               </div>
             </div>
           </div>
-
+          
           {/* Overlay for mobile when chat history is open */}
           {mobileView && isChatHistoryOpen && (
             <div 

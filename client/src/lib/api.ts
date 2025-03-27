@@ -1114,4 +1114,180 @@ function formatMetadata(metadata: Record<string, any>): Record<string, any> {
   }
   
   return formattedMetadata;
+}
+
+/**
+ * Fetch conversation history for the current user
+ * @param limit Optional maximum number of messages to retrieve
+ * @param offset Optional offset for pagination
+ * @param conversationId Optional ID to filter by specific conversation
+ * @returns Conversation history or error details
+ */
+export async function getConversationHistory(
+  limit?: number,
+  offset?: number,
+  conversationId?: string
+): Promise<{ 
+  success: boolean; 
+  history?: any[]; 
+  count?: number;
+  error?: string 
+}> {
+  try {
+    console.log('Fetching conversation history', {
+      limit,
+      offset,
+      conversationId: conversationId || 'none'
+    });
+
+    // Get session for user ID and token
+    const session = await getSession();
+    if (!session || !session.access_token) {
+      console.error('No authenticated user found when fetching conversation history');
+      return { success: false, error: 'Authentication required' };
+    }
+
+    const user = getUser();
+    if (!user || !user.id) {
+      console.error('No user ID available');
+      return { success: false, error: 'User ID not found' };
+    }
+    
+    // Build query parameters
+    const params = new URLSearchParams();
+    params.append('userId', user.id);
+    
+    if (limit) {
+      params.append('limit', limit.toString());
+    }
+    
+    if (offset) {
+      params.append('offset', offset.toString());
+    }
+    
+    if (conversationId) {
+      params.append('conversationId', conversationId);
+    }
+    
+    // Make API request
+    const response = await fetch(`${API_URL}/api/conversations/history?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`
+      }
+    });
+    
+    // Handle 401 Unauthorized - attempt to refresh token and retry
+    if (response.status === 401) {
+      console.warn('Unauthorized when fetching conversation history, attempting token refresh');
+      try {
+        await refreshAccessToken();
+        const refreshedSession = await getSession();
+        
+        if (!refreshedSession?.access_token) {
+          console.error('Failed to refresh token');
+          return { success: false, error: 'Session expired, please login again' };
+        }
+        
+        // Retry the request with new token
+        const retryResponse = await fetch(`${API_URL}/api/conversations/history?${params.toString()}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${refreshedSession.access_token}`
+          }
+        });
+        
+        if (!retryResponse.ok) {
+          console.error(`Retry failed with status: ${retryResponse.status}`);
+          return { success: false, error: `Server error: ${retryResponse.status}` };
+        }
+        
+        const result = await retryResponse.json();
+        return { 
+          success: true, 
+          history: result.history || [],
+          count: result.count || 0
+        };
+      } catch (refreshError) {
+        console.error('Token refresh failed:', refreshError);
+        return { success: false, error: 'Authentication error, please login again' };
+      }
+    }
+    
+    // Handle error responses
+    if (!response.ok) {
+      console.error(`Error fetching conversation history, status: ${response.status}`);
+      return { success: false, error: `Server error: ${response.status}` };
+    }
+    
+    // Parse successful response
+    const result = await response.json();
+    console.log(`Successfully retrieved ${result.count || 0} conversation messages`);
+    
+    return { 
+      success: true, 
+      history: result.history || [],
+      count: result.count || 0
+    };
+  } catch (error: unknown) {
+    console.error('Exception in getConversationHistory:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error fetching conversation history' 
+    };
+  }
+}
+
+/**
+ * Check if the database schema is correctly set up
+ * This function specifically checks if the conversation_id column exists
+ * @returns Promise that resolves to an object with status and error message if any
+ */
+export async function checkDatabaseSchema(): Promise<{ 
+  isValid: boolean;
+  missing?: string[];
+  error?: string;
+}> {
+  try {
+    const session = await getSession();
+    if (!session || !session.access_token) {
+      console.warn('No session available for schema check');
+      return { isValid: true }; // We can't check without a session, so assume it's fine
+    }
+
+    // Make a request to a helper endpoint
+    const response = await fetch(`${API_URL}/api/system/schema-check`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`
+      }
+    });
+
+    if (!response.ok) {
+      // If endpoint doesn't exist, it's an older version of the API without this feature
+      if (response.status === 404) {
+        console.log('Schema check endpoint not available');
+        return { isValid: true };
+      }
+      
+      const errorData = await response.json();
+      return { 
+        isValid: false, 
+        error: errorData.error || `Server error: ${response.status}`
+      };
+    }
+
+    const result = await response.json();
+    return {
+      isValid: result.valid,
+      missing: result.missing || [],
+      error: result.error
+    };
+  } catch (error) {
+    console.error('Error checking database schema:', error);
+    return { 
+      isValid: true, // We default to true on errors to avoid blocking the app
+      error: error instanceof Error ? error.message : 'Unknown error checking schema'
+    };
+  }
 } 
