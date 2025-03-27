@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button"
 import Sidebar from "@/components/sidebar"
 import { getUser, logout, saveConversationMessage, getConversationHistory, checkDatabaseSchema } from "@/lib/api"
 import { sendMessage, createAICalendarEvent, createSimpleCalendarEvent, createNLPCalendarEvent } from "@/lib/ai-api"
+import * as researchApi from "@/lib/research-api"
+import { ResearchDocument } from "@/lib/research-api"
 import {
   Bell,
   ChevronDown,
@@ -26,7 +28,9 @@ import {
   User,
   Settings,
   LogOut,
-  Calendar
+  Calendar,
+  ExternalLink,
+  ChevronRight
 } from "lucide-react"
 
 interface Message {
@@ -43,6 +47,8 @@ interface Message {
     time: string;
     link?: string;
   };
+  researchResults?: ResearchDocument[];
+  isResearching?: boolean;
 }
 
 interface ChatHistory {
@@ -442,6 +448,175 @@ export default function TwinBotChatPage() {
     return false;
   };
 
+  // Add a function to check if a message is a research request
+  const checkIfResearchRequest = (message: string): boolean => {
+    // Check for research-related keywords and phrases
+    const researchKeywords = [
+      /(?:research|study|find information|search for)\s+(?:about|on|for)\s+(.+)/i,
+      /(?:tell me|find|learn|show me)\s+(?:about|more about)\s+(.+)/i,
+      /(?:what|who|when|where|why|how)\s+(?:is|are|was|were)\s+(.+)/i,
+      /(?:latest|recent|new)\s+(?:research|findings|studies|papers|news)\s+(?:about|on|for|regarding)\s+(.+)/i,
+    ];
+    
+    return researchKeywords.some(pattern => pattern.test(message));
+  };
+
+  // Add a function to extract the research topic from a message
+  const extractResearchTopic = (message: string): string => {
+    const researchPatterns = [
+      /(?:research|study|find information|search for)\s+(?:about|on|for)\s+(.+)/i,
+      /(?:tell me|find|learn|show me)\s+(?:about|more about)\s+(.+)/i,
+      /(?:what|who|when|where|why|how)\s+(?:is|are|was|were)\s+(.+)/i,
+      /(?:latest|recent|new)\s+(?:research|findings|studies|papers|news)\s+(?:about|on|for|regarding)\s+(.+)/i,
+    ];
+    
+    for (const pattern of researchPatterns) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+    
+    // If no specific pattern matches, take the whole message
+    return message;
+  };
+
+  // Add a function to perform research based on a message
+  const performResearch = async (message: string, messageId: string) => {
+    const topic = extractResearchTopic(message);
+    
+    try {
+      // Update message to indicate research is in progress
+      setMessages(prevMessages => 
+        prevMessages.map(msg => 
+          msg.id === messageId 
+            ? { ...msg, isResearching: true } 
+            : msg
+        )
+      );
+      
+      // Start a real-time research process
+      const sources = ['arxiv', 'news_api', 'tech_blogs'];
+      const result = await researchApi.startRealtimeResearch(
+        topic,
+        sources,
+        3, // Limit to 3 results for better chat experience
+        "Chat Research"
+      );
+      
+      if (result && result.researchId) {
+        // Poll for research status
+        let completed = false;
+        let attempts = 0;
+        const maxAttempts = 30;
+        
+        while (!completed && attempts < maxAttempts) {
+          attempts++;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          try {
+            const status = await researchApi.getProcessStatus(result.researchId);
+            
+            // Update the progress in the message
+            const progress = Math.min(Math.floor((attempts / maxAttempts) * 100), 95);
+            updateResearchProgress(messageId, progress);
+            
+            if (status.status === 'completed') {
+              completed = true;
+              const documents = status.documents || [];
+              
+              // Get the AI to generate a summary response with the research data
+              const summaryResponse = await getAIResearchSummary(topic, documents);
+              
+              // Update the message with the completed research
+              setMessages(prevMessages => 
+                prevMessages.map(msg => 
+                  msg.id === messageId 
+                    ? { 
+                        ...msg, 
+                        isResearching: false,
+                        content: summaryResponse || `Here's what I found about ${topic}:`,
+                        researchResults: documents 
+                      } 
+                    : msg
+                )
+              );
+              break;
+            }
+          } catch (error) {
+            console.error("Error polling research status:", error);
+            // Continue trying even if there's an error
+          }
+        }
+        
+        // If we hit the max attempts without completion
+        if (!completed) {
+          updateMessageWithResearchFailure(messageId, "Research is taking longer than expected. Please check the Research page for results.");
+        }
+      } else {
+        updateMessageWithResearchFailure(messageId, "Couldn't start the research process. Please try again.");
+      }
+    } catch (error) {
+      console.error("Error performing research:", error);
+      updateMessageWithResearchFailure(messageId, "An error occurred while researching. Please try again later.");
+    }
+  };
+
+  // Helper function to update research progress
+  const updateResearchProgress = (messageId: string, progress: number) => {
+    setMessages(prevMessages => 
+      prevMessages.map(msg => 
+        msg.id === messageId 
+          ? { 
+              ...msg, 
+              content: `Researching... ${progress}% complete` 
+            } 
+          : msg
+      )
+    );
+  };
+
+  // Helper function to update message with research failure
+  const updateMessageWithResearchFailure = (messageId: string, errorMessage: string) => {
+    setMessages(prevMessages => 
+      prevMessages.map(msg => 
+        msg.id === messageId 
+          ? { 
+              ...msg, 
+              isResearching: false,
+              content: errorMessage
+            } 
+          : msg
+      )
+    );
+  };
+
+  // Function to get AI to summarize research results
+  const getAIResearchSummary = async (topic: string, documents: ResearchDocument[]): Promise<string> => {
+    try {
+      // Create a prompt with the research information
+      let prompt = `I've researched "${topic}" and found ${documents.length} relevant resources. Here's a summary:\n\n`;
+      
+      // Add document information to the prompt
+      documents.forEach((doc, index) => {
+        prompt += `${index + 1}. "${doc.title}" (${doc.source})\n`;
+        prompt += `   ${doc.excerpt?.substring(0, 150)}...\n\n`;
+      });
+      
+      prompt += `Could you provide a concise summary of this research on "${topic}" and mention the most important findings?`;
+      
+      // Use the AI API to generate a response
+      const userId = user?.id || "anonymous";
+      const aiResponse = await sendMessage(prompt, userId);
+      
+      // Return the AI's summarized response
+      return aiResponse;
+    } catch (error) {
+      console.error("Error getting AI research summary:", error);
+      return `I found ${documents.length} resources about "${topic}". You can view the detailed results in the Research section.`;
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
     
@@ -507,6 +682,9 @@ export default function TwinBotChatPage() {
       // Check if it's a calendar event request
       const isCalendarRequest = checkIfCalendarEventRequest(inputValue)
       
+      // Check if this is a research request
+      const isResearchRequest = checkIfResearchRequest(inputValue)
+      
       // Generate AI response
       let aiResponseText: string
       
@@ -533,6 +711,21 @@ export default function TwinBotChatPage() {
             `I had trouble creating your calendar event: ${calendarError.message}` : 
             "I had trouble creating your calendar event. Could you please provide more details about when you'd like to schedule it?"
         }
+      } else if (isResearchRequest) {
+        // Add an initial response indicating research is starting
+        setMessages(prevMessages => [
+          ...prevMessages,
+          {
+            id: `bot_${Date.now()}`,
+            content: `Researching about "${extractResearchTopic(inputValue)}"...`,
+        isUser: false,
+        timestamp: new Date(),
+            isResearching: true
+          }
+        ]);
+        
+        // Perform the research asynchronously
+        performResearch(inputValue, `bot_${Date.now()}`)
       } else {
         try {
           // Standard AI response
@@ -643,7 +836,7 @@ export default function TwinBotChatPage() {
           chat.timestamp = aiMessage.timestamp
           
           updatedHistory[chatIndex] = chat
-          return updatedHistory
+        return updatedHistory
         } else {
           // Create a new chat history entry
           return [
@@ -676,9 +869,9 @@ export default function TwinBotChatPage() {
         ...prev,
         {
           id: `error_${Date.now().toString()}`,
-          content: "Sorry, I encountered an error. Please try again.",
-          isUser: false,
-          timestamp: new Date(),
+        content: "Sorry, I encountered an error. Please try again.",
+        isUser: false,
+        timestamp: new Date(),
           error: error instanceof Error ? error.message : String(error)
         }
       ])
@@ -702,8 +895,8 @@ export default function TwinBotChatPage() {
     // Add new chat to chat history
     setChatHistory(prev => [
       {
-        id: newChatId,
-        title: "New Conversation",
+      id: newChatId,
+      title: "New Conversation",
         lastMessage: welcomeMessage.content,
         timestamp: welcomeMessage.timestamp,
         messages: [welcomeMessage]
@@ -899,38 +1092,61 @@ export default function TwinBotChatPage() {
           <span className="typing-cursor">▋</span>
         </p>
       )
-    }
-    
-    // Show calendar icon for calendar event related messages
-    const calendarPatterns = [
-      /added\s+(?:"|")(.+?)(?:"|")\s+to\s+your\s+calendar/i,
-      /created\s+(?:an\s+)?event\s+(?:"|")(.+?)(?:"|")/i, 
-      /scheduled.+?(\d{4}-\d{2}-\d{2})/i,
-      /calendar\s+event/i,
-      /view\s+(?:the\s+)?event\s+in\s+Google\s+Calendar/i,
-      /view\s+in\s+Google\s+Calendar/i
-    ];
-    
-    const isCalendarMessage = !message.isUser && (
-      calendarPatterns.some(pattern => pattern.test(message.content)) ||
-      message.content.includes("I've created an event") || 
-      message.content.includes("I'd like to create that calendar event") ||
-      message.content.includes("to your calendar on")
-    );
-    
-    return (
-      <div>
-        <p className="whitespace-pre-wrap text-sm">
-          {formatMessageWithMarkdown(message.content)}
+    } else if (message.error) {
+      return (
+        <p className="text-red-500">
+          {message.error}
         </p>
-        {isCalendarMessage && (
-          <div className="mt-2 flex items-center text-xs text-[#3ecf8e]">
-            <Calendar className="h-3 w-3 mr-1" />
-            <span>Calendar Event</span>
+      )
+    } else if (message.calendarEvent) {
+      return (
+        <div className="space-y-4">
+          <div>{formatMessageWithMarkdown(message.content)}</div>
+          
+          <div className="mt-4 border-t pt-2">
+            <div className="text-sm font-medium mb-2">Research Sources:</div>
+            <div className="space-y-3">
+              {message.researchResults?.slice(0, 3).map((result, index) => (
+                <div key={index} className="bg-accent/50 rounded-md p-3">
+                  <div className="font-medium">{result.title}</div>
+                  <div className="text-sm text-muted-foreground line-clamp-2 mt-1">{result.excerpt}</div>
+                  <div className="flex justify-between items-center mt-2">
+                    <span className="text-xs text-muted-foreground">{result.source}</span>
+                    {result.url && (
+                      <Link 
+                        href={result.url} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-xs text-primary hover:underline flex items-center"
+                      >
+                        View Source
+                        <ExternalLink className="h-3 w-3 ml-1" />
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <Link
+              href="/dashboard/research"
+              className="text-xs text-primary hover:underline flex items-center mt-2"
+            >
+              View all results in Research Dashboard
+              <ChevronRight className="h-3 w-3 ml-1" />
+            </Link>
           </div>
-        )}
-      </div>
+        </div>
+      )
+    } else {
+    return (
+        <div>
+      <p className="whitespace-pre-wrap text-sm">
+        {formatMessageWithMarkdown(message.content)}
+      </p>
+        </div>
     )
+    }
   }
   
   // Function to format text with basic markdown
@@ -1174,7 +1390,7 @@ export default function TwinBotChatPage() {
               <span className="absolute top-1 right-1 h-2 w-2 bg-[#3ecf8e] rounded-full"></span>
             </button>
             <div className="relative" ref={profileRef}>
-              <button
+              <button 
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
                 className="flex items-center hover:bg-[#272727] p-1 rounded-md transition-colors"
               >
@@ -1183,7 +1399,7 @@ export default function TwinBotChatPage() {
                 </Avatar>
                 <ChevronDown className={`h-4 w-4 ml-1 text-gray-400 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
               </button>
-
+              
               {isProfileOpen && (
                 <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-[#1c1c1c] ring-1 ring-black ring-opacity-5 z-50">
                   <div className="px-4 py-2 border-b border-gray-800">
@@ -1204,7 +1420,7 @@ export default function TwinBotChatPage() {
                     <Settings className="h-4 w-4 mr-2" />
                     Settings
                   </Link>
-                  <button
+                  <button 
                     onClick={handleLogout}
                     className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[#272727] hover:text-white flex items-center"
                   >
@@ -1428,7 +1644,7 @@ export default function TwinBotChatPage() {
               </div>
             </div>
           </div>
-          
+
           {/* Overlay for mobile when chat history is open */}
           {mobileView && isChatHistoryOpen && (
             <div 

@@ -14,6 +14,7 @@ import emailRoutes from './routes/email.js';
 import aiRoutes from './routes/ai.js';
 import calendarRoutes from './routes/calendar.js';
 import conversationRoutes from './routes/conversation.js';
+import researchRoutes from './routes/research.js';
 
 // Create Express app
 const app = express();
@@ -59,6 +60,7 @@ app.use('/api/email', emailMiddleware, emailRoutes);
 app.use('/api/ai', authMiddleware, aiRoutes);
 app.use('/api/calendar', authMiddleware, calendarRoutes);
 app.use('/api/conversations', authMiddleware, conversationRoutes);
+app.use('/api/research', authMiddleware, researchRoutes);
 // Use the AI routes for twin functionality
 app.use('/api/twin', authMiddleware, (req, res, next) => {
   // Rewrite the URL path to use our AI endpoints

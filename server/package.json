@@ -25,19 +25,22 @@
     "@azure/core-sse": "latest",
     "@google/generative-ai": "^0.24.0",
     "@radix-ui/react-dropdown-menu": "^2.1.6",
-    "@supabase/supabase-js": "^2.38.0",
+    "@supabase/supabase-js": "^2.49.3",
     "ai": "^4.2.2",
+    "axios": "^1.8.4",
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-validator": "^7.2.1",
     "framer-motion": "^12.6.2",
     "googleapis": "^129.0.0",
     "imapflow": "^1.0.184",
     "jsonwebtoken": "^9.0.2",
     "mailparser": "^3.6.5",
     "node-fetch": "^3.3.2",
-    "tailwind-merge": "^3.0.2"
+    "tailwind-merge": "^3.0.2",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

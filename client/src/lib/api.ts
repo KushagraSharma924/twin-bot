@@ -1290,4 +1290,307 @@ export async function checkDatabaseSchema(): Promise<{
       error: error instanceof Error ? error.message : 'Unknown error checking schema'
     };
   }
+}
+
+// Research Types
+export interface ResearchDocument {
+  id: string;
+  title: string;
+  excerpt: string;
+  content?: string;
+  source: string;
+  url?: string;
+  category: string;
+  type: 'paper' | 'article' | 'news' | 'synthesis' | 'graph' | 'alert';
+  dateAdded: string;
+  datePublished?: string;
+  saved: boolean;
+  starred: boolean;
+  tags: string[];
+  metadata?: any;
+  lastUpdated?: string;
+  insights?: string[];
+  connections?: { id: string; title: string; strength: number }[];
+}
+
+export interface ResearchProcessResult {
+  researchId: string;
+  estimatedTime: number;
+  message: string;
+}
+
+export interface ResearchProcessStatus {
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'not_found';
+  process?: any;
+  documents?: ResearchDocument[];
+}
+
+// Research API Functions
+
+/**
+ * Fetch research documents with optional filtering
+ * @param params - Filter and pagination parameters
+ * @returns Array of research documents with pagination info
+ */
+export async function fetchResearchDocuments(params: {
+  type?: string;
+  category?: string;
+  query?: string;
+  page?: number;
+  limit?: number;
+  sort?: string;
+  order?: 'asc' | 'desc';
+}) {
+  const session = await getSession();
+  if (!session || !session.access_token) {
+    throw new Error('Unauthorized: No active session');
+  }
+
+  const url = new URL(`${process.env.NEXT_PUBLIC_API_URL}/api/research`);
+  
+  // Add query parameters
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined) {
+      url.searchParams.append(key, String(value));
+    }
+  });
+
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    }
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage;
+    try {
+      const errorJson = JSON.parse(errorText);
+      errorMessage = errorJson.message || `Failed to fetch research documents: ${response.status}`;
+    } catch (e) {
+      errorMessage = `Failed to fetch research documents: ${response.status}`;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Fetch a specific research document by ID
+ * @param id - Document ID
+ * @returns Research document
+ */
+export async function fetchResearchDocument(id: string) {
+  const session = await getSession();
+  if (!session || !session.access_token) {
+    throw new Error('Unauthorized: No active session');
+  }
+
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/research/${id}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    }
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage;
+    try {
+      const errorJson = JSON.parse(errorText);
+      errorMessage = errorJson.message || `Failed to fetch research document: ${response.status}`;
+    } catch (e) {
+      errorMessage = `Failed to fetch research document: ${response.status}`;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Start a real-time research process
+ * @param data - Research parameters
+ * @returns Research process result
+ */
+export async function startRealtimeResearch(data: {
+  query: string;
+  sources: string[];
+  maxResults?: number;
+  category?: string;
+}): Promise<ResearchProcessResult> {
+  const session = await getSession();
+  if (!session || !session.access_token) {
+    throw new Error('Unauthorized: No active session');
+  }
+
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/research/realtime`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    },
+    body: JSON.stringify(data)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage;
+    try {
+      const errorJson = JSON.parse(errorText);
+      errorMessage = errorJson.message || `Failed to start real-time research: ${response.status}`;
+    } catch (e) {
+      errorMessage = `Failed to start real-time research: ${response.status}`;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Start a knowledge synthesis process
+ * @param data - Synthesis parameters
+ * @returns Research process result
+ */
+export async function startKnowledgeSynthesis(data: {
+  topic: string;
+  documents?: string[];
+  depth?: 'low' | 'medium' | 'high';
+  category?: string;
+}): Promise<ResearchProcessResult> {
+  const session = await getSession();
+  if (!session || !session.access_token) {
+    throw new Error('Unauthorized: No active session');
+  }
+
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/research/synthesis`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    },
+    body: JSON.stringify(data)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage;
+    try {
+      const errorJson = JSON.parse(errorText);
+      errorMessage = errorJson.message || `Failed to start knowledge synthesis: ${response.status}`;
+    } catch (e) {
+      errorMessage = `Failed to start knowledge synthesis: ${response.status}`;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Check the status of a research process
+ * @param processId - Process ID
+ * @returns Research process status
+ */
+export async function checkResearchProcessStatus(processId: string): Promise<ResearchProcessStatus> {
+  const session = await getSession();
+  if (!session || !session.access_token) {
+    throw new Error('Unauthorized: No active session');
+  }
+
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/research/status/${processId}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    }
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage;
+    try {
+      const errorJson = JSON.parse(errorText);
+      errorMessage = errorJson.message || `Failed to check research process status: ${response.status}`;
+    } catch (e) {
+      errorMessage = `Failed to check research process status: ${response.status}`;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Update a research document (bookmark, star, tags, etc.)
+ * @param id - Document ID
+ * @param updates - Fields to update
+ * @returns Updated document
+ */
+export async function updateResearchDocument(id: string, updates: Partial<ResearchDocument>) {
+  const session = await getSession();
+  if (!session || !session.access_token) {
+    throw new Error('Unauthorized: No active session');
+  }
+
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/research/${id}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    },
+    body: JSON.stringify(updates)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage;
+    try {
+      const errorJson = JSON.parse(errorText);
+      errorMessage = errorJson.message || `Failed to update research document: ${response.status}`;
+    } catch (e) {
+      errorMessage = `Failed to update research document: ${response.status}`;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Delete a research document
+ * @param id - Document ID
+ */
+export async function deleteResearchDocument(id: string) {
+  const session = await getSession();
+  if (!session || !session.access_token) {
+    throw new Error('Unauthorized: No active session');
+  }
+
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/research/${id}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    }
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage;
+    try {
+      const errorJson = JSON.parse(errorText);
+      errorMessage = errorJson.message || `Failed to delete research document: ${response.status}`;
+    } catch (e) {
+      errorMessage = `Failed to delete research document: ${response.status}`;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return true;
 } 

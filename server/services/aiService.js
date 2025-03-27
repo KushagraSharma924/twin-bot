@@ -812,4 +812,344 @@ export async function addEventToCalendar(eventDetails, accessToken) {
     console.error('Error adding event to calendar:', error);
     throw error;
   }
+}
+
+/**
+ * Generate insights from research content
+ * @param {string} content - The research content to analyze
+ * @param {string} context - Additional context like the research query
+ * @returns {Promise<Object>} - Insights object with key points
+ */
+export async function generateResearchInsights(content, context = '') {
+  try {
+    console.log('Generating research insights', { contentLength: content.length, context });
+    
+    // In a production environment, this would call a real AI model
+    // For demo purposes, we're generating mock insights
+    
+    // Simulate processing time
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Generate some relevant insights based on the context
+    const insights = [];
+    
+    if (context.toLowerCase().includes('ai') || content.toLowerCase().includes('ai')) {
+      insights.push('AI models show increasing capability for complex reasoning tasks');
+      insights.push('Ethical considerations remain a primary concern in deployment');
+      insights.push('Data quality significantly impacts model performance');
+    }
+    
+    if (context.toLowerCase().includes('security') || content.toLowerCase().includes('security')) {
+      insights.push('New attack vectors emerging in distributed systems');
+      insights.push('Zero-trust architecture adoption increasing in enterprise');
+      insights.push('AI-powered detection systems reducing false positives by 37%');
+    }
+    
+    if (context.toLowerCase().includes('blockchain') || content.toLowerCase().includes('blockchain')) {
+      insights.push('Layer 2 solutions addressing scalability concerns');
+      insights.push('Enterprise adoption focusing on private blockchain implementations');
+      insights.push('Regulatory frameworks evolving rapidly across jurisdictions');
+    }
+    
+    // Default insights if none match
+    if (insights.length === 0) {
+      insights.push('Multiple methodologies compared showing varied efficacy');
+      insights.push('Implementation challenges identified for practical applications');
+      insights.push('Further research needed to address limitations in current approach');
+    }
+    
+    return {
+      insights,
+      sentiment: Math.random() > 0.5 ? 'positive' : 'neutral',
+      confidence: 0.7 + (Math.random() * 0.3)
+    };
+  } catch (error) {
+    console.error('Error generating research insights', error);
+    return {
+      insights: [
+        'Unable to generate detailed insights for this content',
+        'Consider reviewing the source material directly'
+      ],
+      sentiment: 'neutral',
+      confidence: 0.5
+    };
+  }
+}
+
+/**
+ * Generate a knowledge synthesis from multiple documents
+ * @param {string} topic - The synthesis topic
+ * @param {Array<Object>} documents - Documents to synthesize
+ * @param {string} depth - Synthesis depth (low, medium, high)
+ * @returns {Promise<Object>} - Synthesis result
+ */
+export async function generateKnowledgeSynthesis(topic, documents, depth = 'medium') {
+  try {
+    console.log('Generating knowledge synthesis', { 
+      topic, 
+      documentsCount: documents.length, 
+      depth 
+    });
+    
+    // In a production environment, this would call a real AI model
+    // For demo purposes, we're generating mock synthesis
+    
+    // Simulate longer processing time based on depth
+    const processingTime = depth === 'low' ? 1000 : (depth === 'medium' ? 2000 : 3000);
+    await new Promise(resolve => setTimeout(resolve, processingTime));
+    
+    // Build a simple synthesis based on the topic
+    let summary, content, keyFindings, insights;
+    
+    if (topic.toLowerCase().includes('ai') || topic.toLowerCase().includes('machine learning')) {
+      summary = "Recent advances in AI and machine learning show promising results across multiple domains, with particular emphasis on large language models and multimodal systems.";
+      content = "The synthesis of recent AI research reveals several key trends. First, large language models continue to grow in capability and application scope. Second, multimodal systems integrating vision, text, and audio are demonstrating enhanced reasoning abilities. Third, efforts to reduce computational requirements while maintaining performance are showing promising results.\n\nChallenges remain in several areas: ethical considerations including bias mitigation, evaluation methodology standardization, and deployment in resource-constrained environments. The field is rapidly evolving with significant industrial and academic collaboration.";
+      keyFindings = [
+        "Large language models demonstrate emergent abilities at scale",
+        "Multimodal integration enhances reasoning capabilities",
+        "Ethical considerations remain central to deployment strategies",
+        "Efficiency improvements reducing computational requirements by 30-40%"
+      ];
+      insights = [
+        "Model alignment techniques significantly impact real-world performance",
+        "Domain-specific fine-tuning shows diminishing returns after certain thresholds",
+        "Hybrid approaches combining symbolic and neural methods show promise for reasoning tasks"
+      ];
+    } else if (topic.toLowerCase().includes('security') || topic.toLowerCase().includes('cyber')) {
+      summary = "Cybersecurity approaches are evolving rapidly with AI-powered systems showing particular promise for threat detection and mitigation in complex environments.";
+      content = "The synthesis of current cybersecurity research highlights the shifting landscape of threats and defenses. AI-powered detection systems are increasingly capable of identifying novel attack patterns, particularly in network traffic analysis and endpoint protection. Zero-trust architecture adoption continues to grow in enterprise environments, with identity verification forming the cornerstone of modern security postures.\n\nThreat actors are demonstrating increasing sophistication, with supply chain attacks and ransomware continuing to pose significant challenges. Critical infrastructure protection remains an area of particular concern, with public-private partnerships emerging as a key strategy for resilience.";
+      keyFindings = [
+        "AI detection systems reduce alert fatigue by filtering false positives",
+        "Zero-trust architecture adoption increasing across sectors",
+        "Supply chain attacks represent growing threat vector",
+        "Ransomware tactics evolving to target cloud infrastructure"
+      ];
+      insights = [
+        "Behavioral analysis outperforms signature-based detection for novel threats",
+        "Secure-by-design principles gaining traction in development practices",
+        "Recovery capabilities proving as important as prevention measures"
+      ];
+    } else {
+      summary = `Recent research on ${topic} reveals significant progress and evolving methodologies with potential for practical applications.`;
+      content = `The synthesis of current research on ${topic} highlights several important developments. Multiple approaches have been explored with varying degrees of success, with methodology differences significantly impacting outcomes. Implementation challenges remain for practical applications, particularly regarding scalability and integration with existing systems.\n\nStakeholder perspectives vary considerably, with different priorities emerging from academic, industry, and regulatory viewpoints. Future directions for research include addressing current limitations, exploring hybrid approaches, and developing standardized evaluation frameworks.`;
+      keyFindings = [
+        "Multiple methodologies yield varying success rates",
+        "Implementation challenges identified for practical applications",
+        "Stakeholder perspectives differ on priorities and approaches",
+        "Standardized evaluation frameworks needed for proper comparison"
+      ];
+      insights = [
+        "Combined approaches show more promise than single-methodology solutions",
+        "Contextual factors significantly impact implementation success",
+        "Future research directions should focus on addressing current limitations"
+      ];
+    }
+    
+    // If depth is high, generate a mock knowledge graph
+    let graph = null;
+    if (depth === 'high' || depth === 'medium') {
+      graph = _generateMockKnowledgeGraph(topic, documents);
+    }
+    
+    return {
+      topic,
+      summary,
+      content,
+      key_findings: keyFindings,
+      insights,
+      graph,
+      depth,
+      document_count: documents.length,
+      confidence: 0.7 + (Math.random() * 0.3)
+    };
+  } catch (error) {
+    console.error('Error generating knowledge synthesis', error);
+    return {
+      topic,
+      summary: `Synthesis of ${topic} research.`,
+      content: `A review of the available information on ${topic} suggests various perspectives and approaches. The synthesis process encountered challenges in fully integrating the available data.`,
+      key_findings: [
+        "Multiple perspectives exist on this topic",
+        "Further research is needed for comprehensive understanding",
+        "Available data shows some inconsistencies"
+      ],
+      insights: [
+        "Consider consulting primary sources for detailed analysis",
+        "The field appears to be evolving rapidly"
+      ],
+      document_count: documents.length,
+      confidence: 0.5
+    };
+  }
+}
+
+/**
+ * Generate a mock knowledge graph (internal helper function)
+ * @private
+ */
+function _generateMockKnowledgeGraph(topic, documents) {
+  // Create mock nodes based on the topic and documents
+  const nodes = [
+    { id: 'n1', label: topic, type: 'topic', size: 40 }
+  ];
+  
+  // Add concept nodes
+  const concepts = [
+    'Methodology', 'Applications', 'Challenges', 'Future Directions', 
+    'Key Findings', 'Historical Context', 'Evaluation Metrics'
+  ];
+  
+  concepts.forEach((concept, i) => {
+    nodes.push({
+      id: `c${i+1}`,
+      label: concept,
+      type: 'concept',
+      size: 25
+    });
+  });
+  
+  // Add document nodes
+  documents.forEach((doc, i) => {
+    if (i < 8) { // Limit to 8 document nodes for clarity
+      nodes.push({
+        id: `d${i+1}`,
+        label: doc.title.length > 30 ? doc.title.substring(0, 30) + '...' : doc.title,
+        type: 'document',
+        size: 15,
+        source: doc.source,
+        documentId: doc.id
+      });
+    }
+  });
+  
+  // Create edges
+  const edges = [];
+  
+  // Connect topic to concepts
+  concepts.forEach((concept, i) => {
+    edges.push({
+      source: 'n1',
+      target: `c${i+1}`,
+      weight: 0.7 + (Math.random() * 0.3)
+    });
+  });
+  
+  // Connect documents to concepts
+  documents.forEach((doc, i) => {
+    if (i < 8) {
+      // Each document connects to 1-3 concepts
+      const numConnections = 1 + Math.floor(Math.random() * 3);
+      const conceptIndices = _getRandomIndices(concepts.length, numConnections);
+      
+      conceptIndices.forEach(conceptIdx => {
+        edges.push({
+          source: `d${i+1}`,
+          target: `c${conceptIdx+1}`,
+          weight: 0.5 + (Math.random() * 0.5)
+        });
+      });
+      
+      // Also connect to topic
+      edges.push({
+        source: `d${i+1}`,
+        target: 'n1',
+        weight: 0.4 + (Math.random() * 0.3)
+      });
+    }
+  });
+  
+  // Connect some documents to each other
+  if (documents.length > 1) {
+    const connections = Math.min(documents.length, 5);
+    for (let i = 0; i < connections; i++) {
+      const [idx1, idx2] = _getRandomIndices(Math.min(documents.length, 8), 2);
+      
+      edges.push({
+        source: `d${idx1+1}`,
+        target: `d${idx2+1}`,
+        weight: 0.3 + (Math.random() * 0.4)
+      });
+    }
+  }
+  
+  return { nodes, edges };
+}
+
+/**
+ * Helper to get random unique indices
+ * @private
+ */
+function _getRandomIndices(max, count) {
+  const indices = [];
+  while (indices.length < count && indices.length < max) {
+    const idx = Math.floor(Math.random() * max);
+    if (!indices.includes(idx)) {
+      indices.push(idx);
+    }
+  }
+  return indices;
+}
+
+/**
+ * Extract research interests from a user's chat history
+ * @param {string} chatHistory - Text from user's chat messages
+ * @returns {Promise<Array<string>>} - Array of research interests
+ */
+export async function extractResearchInterests(chatHistory) {
+  try {
+    const prompt = `
+You are a research topic extractor. Analyze the following chat messages from a user and identify their top 5 research interests or topics they'd like to learn more about. 
+The topics should be general enough to be useful for research (e.g., "Machine Learning" rather than "TensorFlow installation error").
+Do not include specific technical problems or troubleshooting questions.
+
+Format your response as a JSON array of strings, with each string being a research topic or interest area.
+Example: ["Machine Learning", "Web Development", "Cybersecurity", "Blockchain", "Cloud Architecture"]
+
+User Chat History:
+${chatHistory}
+
+Research Interests:`;
+
+    const model = 'gemini-pro'; // Using Gemini for structured output
+    const response = await generateTextWithGemini(prompt, model);
+    
+    try {
+      // Try to parse the response as JSON
+      const jsonMatch = response.match(/\[[\s\S]*\]/);
+      
+      if (jsonMatch) {
+        const interestsArray = JSON.parse(jsonMatch[0]);
+        
+        // Validate that it's an array of strings
+        if (Array.isArray(interestsArray) && interestsArray.every(item => typeof item === 'string')) {
+          return interestsArray;
+        }
+      }
+      
+      // If not valid JSON array, try to extract lines that look like topics
+      const lines = response.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.startsWith('[') && !line.startsWith(']') && !line.includes(':'))
+        .map(line => line.replace(/^["'\d\.\-\s]+/, '').replace(/["',]$/, '').trim());
+      
+      if (lines.length > 0) {
+        return lines.slice(0, 5); // Return up to 5 interests
+      }
+      
+      // If no interests found, return a default interest
+      return ['AI & Machine Learning'];
+    } catch (parseError) {
+      console.error('Error parsing research interests from AI response:', parseError);
+      // Extract lines that look like topics
+      const lines = response.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.includes(':') && line.length < 50)
+        .map(line => line.replace(/^["'\d\.\-\s]+/, '').replace(/["',]$/, '').trim());
+      
+      return lines.slice(0, 5); // Return up to 5 interests
+    }
+  } catch (error) {
+    console.error('Error extracting research interests:', error);
+    return ['AI & Machine Learning']; // Default fallback
+  }
 } 
