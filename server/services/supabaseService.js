@@ -105,44 +105,227 @@ export const profiles = {
  */
 export const conversations = {
   /**
-   * Add a message to the conversation history
-   * @param {string} userId - User ID
-   * @param {string} message - Message content
-   * @param {string} source - Message source (user or assistant)
-   * @param {Object} metadata - Additional message metadata
+   * Add a message to conversation history
+   * @param {string} message - The message content
+   * @param {string} source - The source ('user' or 'assistant')
+   * @param {string} userId - The user ID
+   * @param {Object} metadata - Additional metadata
+   * @returns {Promise<Object>} - Added message record
    */
-  async addMessage(userId, message, source, metadata = {}) {
-    const { error } = await supabase
-      .from('conversations')
-      .insert([{
-        user_id: userId,
-        message,
+  async addMessage(message, source, userId, metadata = {}) {
+    try {
+      console.log(`Adding message to conversation history for user ${userId}:`, {
+        messageLength: message ? message.length : 0,
         source,
-        timestamp: new Date(),
-        metadata
-      }]);
-    
-    if (error) throw error;
-    return true;
+        hasMetadata: !!metadata,
+        metadataKeys: Object.keys(metadata)
+      });
+      
+      // Check for Supabase client
+      if (!supabase) {
+        console.error('Error: Supabase client is not initialized');
+        return { 
+          id: null, 
+          success: false, 
+          error: 'Database client not initialized' 
+        };
+      }
+      
+      // Validate inputs
+      if (!message) {
+        console.error('Error: Message content is required');
+        return { 
+          id: null, 
+          success: false, 
+          error: 'Message content is required' 
+        };
+      }
+      
+      if (!source || !['user', 'assistant'].includes(source)) {
+        console.error(`Error: Invalid source "${source}" - must be "user" or "assistant"`);
+        return { 
+          id: null, 
+          success: false, 
+          error: 'Source must be "user" or "assistant"' 
+        };
+      }
+      
+      if (!userId) {
+        console.error('Error: User ID is required');
+        return { 
+          id: null, 
+          success: false, 
+          error: 'User ID is required' 
+        };
+      }
+      
+      // Process metadata - ensure it's an object
+      let processedMetadata = metadata || {};
+      if (typeof metadata === 'string') {
+        try {
+          processedMetadata = JSON.parse(metadata);
+          console.log('Successfully parsed metadata string to object');
+        } catch (e) {
+          console.warn('Could not parse metadata string as JSON:', e.message);
+          // Use a simple object with the string as a value
+          processedMetadata = { rawValue: metadata };
+        }
+      }
+      
+      // Convert any non-JSON-serializable items in metadata
+      try {
+        // Test if the metadata is serializable
+        JSON.stringify(processedMetadata);
+      } catch (e) {
+        console.warn('Metadata contains non-serializable values, converting to string representation');
+        // Convert to a simplified version that can be serialized
+        processedMetadata = Object.entries(processedMetadata).reduce((acc, [key, value]) => {
+          try {
+            // Test if this value is serializable
+            JSON.stringify(value);
+            acc[key] = value;
+          } catch (err) {
+            console.warn(`Converting non-serializable value for key "${key}" to string`);
+            acc[key] = String(value);
+          }
+          return acc;
+        }, {});
+      }
+      
+      // Extract conversation ID from metadata
+      const conversationId = processedMetadata.conversationId || null;
+      console.log(`Using conversation ID: ${conversationId || 'none'}`);
+      
+      // Create payload with current timestamp if not provided
+      const timestamp = processedMetadata.timestamp || new Date().toISOString();
+      delete processedMetadata.timestamp; // Remove from metadata to avoid duplication
+      
+      const payload = {
+        message: message,
+        source: source,
+        user_id: userId,
+        conversation_id: conversationId,
+        metadata: processedMetadata,
+        timestamp: timestamp
+      };
+      
+      console.log('Executing Supabase insert with payload:', {
+        messagePreview: message.substring(0, 20) + (message.length > 20 ? '...' : ''),
+        source: payload.source,
+        userId: payload.user_id,
+        conversationId: payload.conversation_id,
+        timestamp: payload.timestamp
+      });
+      
+      // Insert the message
+      const { data, error } = await supabase
+        .from('conversations')
+        .insert(payload)
+        .select('*');
+      
+      if (error) {
+        console.error('Supabase error inserting message:', error);
+        return { 
+          id: null, 
+          success: false, 
+          error: `Database error: ${error.message || error.code || 'Unknown error'}` 
+        };
+      }
+      
+      if (!data || data.length === 0) {
+        console.error('No data returned from insert operation');
+        return { 
+          id: null, 
+          success: false, 
+          error: 'Failed to insert message - no data returned' 
+        };
+      }
+      
+      console.log('Message added successfully with ID:', data[0].id);
+      return {
+        ...data[0],
+        success: true
+      };
+    } catch (error) {
+      console.error('Error adding message to conversation history:', error);
+      // Return a structured error response instead of throwing
+      return { 
+        id: null, 
+        success: false, 
+        error: error.message || 'Unknown error saving conversation message' 
+      };
+    }
   },
   
   /**
    * Get conversation history for a user
-   * @param {string} userId - User ID
-   * @param {number} limit - Maximum number of messages to retrieve
+   * @param {string} userId - User ID to fetch history for
+   * @param {number} limit - Maximum number of messages to return
    * @param {number} offset - Offset for pagination
+   * @param {string|null} conversationId - Optional conversation ID to filter by
+   * @returns {Promise<Array>} - Array of conversation messages
    */
-  async getHistory(userId, limit = 50, offset = 0) {
-    const { data, error } = await supabase
-      .from('conversations')
-      .select('*')
-      .eq('user_id', userId)
-      .order('timestamp', { ascending: false })
-      .limit(limit)
-      .offset(offset);
+  async getHistory(userId, limit = 50, offset = 0, conversationId = null) {
+    console.log('getHistory called with params:', { userId, limit, offset, conversationId });
     
-    if (error) throw error;
-    return data;
+    try {
+      // Ensure Supabase client is initialized
+      if (!supabase) {
+        console.error('Supabase client not initialized');
+        return [];
+      }
+      
+      // Validate userId is provided
+      if (!userId) {
+        console.error('User ID is required for getHistory');
+        return [];
+      }
+      
+      console.log(`Fetching conversations for user: ${userId}`);
+      
+      // Build the base query
+      let query = supabase.from('conversations').select('*');
+      
+      // Add user filter
+      query = query.eq('user_id', userId);
+      
+      // Filter by conversation ID if provided
+      if (conversationId) {
+        console.log(`Filtering by conversation ID: ${conversationId}`);
+        query = query.eq('conversation_id', conversationId);
+      }
+      
+      // Add ordering by timestamp or created_at
+      // Check if timestamp column exists
+      query = query.order('timestamp', { ascending: false });
+      
+      // Execute the query
+      console.log('Executing Supabase query...');
+      const { data, error } = await query;
+      
+      if (error) {
+        console.error('Supabase query error:', error);
+        throw error;
+      }
+      
+      if (!data || data.length === 0) {
+        console.log('No conversation history found');
+        return [];
+      }
+      
+      console.log(`Found ${data.length} total messages`);
+      
+      // Apply pagination manually in JavaScript
+      const paginatedData = data.slice(offset, offset + limit);
+      console.log(`Returning ${paginatedData.length} messages after pagination`);
+      
+      return paginatedData;
+    } catch (error) {
+      console.error('Error fetching conversation history:', error);
+      console.error('Error details:', error.stack);
+      // Return empty array instead of throwing to avoid breaking the API
+      return [];
+    }
   }
 };
 

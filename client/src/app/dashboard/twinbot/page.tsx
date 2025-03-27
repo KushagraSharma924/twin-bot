@@ -9,8 +9,8 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import Sidebar from "@/components/sidebar"
-import { getUser, logout } from "@/lib/api"
-import { sendMessage, createAICalendarEvent, createSimpleCalendarEvent } from "@/lib/ai-api"
+import { getUser, logout, saveConversationMessage } from "@/lib/api"
+import { sendMessage, createAICalendarEvent, createSimpleCalendarEvent, createNLPCalendarEvent } from "@/lib/ai-api"
 import {
   Bell,
   ChevronDown,
@@ -36,6 +36,13 @@ interface Message {
   timestamp: Date
   isTyping?: boolean
   typingContent?: string
+  error?: string
+  calendarEvent?: {
+    name: string;
+    date: string;
+    time: string;
+    link?: string;
+  };
 }
 
 interface ChatHistory {
@@ -287,6 +294,29 @@ export default function TwinBotChatPage() {
     setIsLoading(true)
 
     try {
+      // Update the saveConversationMessage call for the user message
+      try {
+        console.log("Saving user message to database:", userMessage.content.substring(0, 50) + (userMessage.content.length > 50 ? "..." : ""));
+        const saveResult = await saveConversationMessage(
+          userMessage.content,
+          'user',
+          { 
+            conversationId: activeChatId,
+            timestamp: userMessage.timestamp.toISOString()
+          }
+        );
+        
+        if (!saveResult.success) {
+          console.warn("Failed to save user message:", saveResult.error);
+          // Continue with the chat flow even if saving fails
+        } else {
+          console.log("User message saved successfully with ID:", saveResult.id);
+        }
+      } catch (saveError) {
+        console.error("Error saving user message:", saveError);
+        // Continue with the chat flow even if saving fails
+      }
+      
       // Add initial AI message with typing state
       const botMessageId = `bot-${Date.now()}`
       const initialBotMessage: Message = {
@@ -305,59 +335,113 @@ export default function TwinBotChatPage() {
       
       let response = ""
       
-      if (isCalendarRequest) {
-        console.log("Detected calendar event request:", userMessage.content);
-        try {
-          // Log every step for debugging
-          console.log("Creating calendar event from message:", userMessage.content);
-          console.log("User ID:", user.id);
-          console.log("Google token available:", !!localStorage.getItem('google_token'));
-          
-          // Use the new simplified approach for calendar event creation
-          const eventResult = await createSimpleCalendarEvent(userMessage.content, user.id)
-          
-          console.log("Calendar event creation response:", eventResult);
-          
-          // If we have extracted event details, include them in the response
-          if (eventResult.eventDetails) {
-            const { eventName, eventDate, eventTime } = eventResult.eventDetails
-            response = eventResult.message || `I've added "${eventName}" to your calendar on ${eventDate} at ${eventTime}.`
+      try {
+        if (isCalendarRequest) {
+          console.log("Detected calendar event request:", userMessage.content);
+          try {
+            // Use the enhanced NLP calendar event creation
+            const eventResult = await createNLPCalendarEvent(userMessage.content, user.id)
             
-            // Also provide a confirmation that includes viewing the event
-            if (eventResult.event && eventResult.event.htmlLink) {
-              response += `\n\nYou can [view the event in Google Calendar](${eventResult.event.htmlLink}).`;
+            console.log("Calendar event creation response:", eventResult);
+            
+            // If we have extracted event details, include them in the response
+            if (eventResult.eventDetails) {
+              const { eventName, eventDate, eventTime } = eventResult.eventDetails
+              response = eventResult.message || `I've added "${eventName}" to your calendar on ${eventDate} at ${eventTime}.`
+              
+              // Add calendar event details to the message for display
+              const calendarEventData = {
+                name: eventName,
+                date: eventDate,
+                time: eventTime,
+                link: eventResult.event?.htmlLink
+              }
+              
+              // Update the bot message with calendar event data
+              initialBotMessage.calendarEvent = calendarEventData
+            } else {
+              response = eventResult.message || "I've created that calendar event for you."
             }
-          } else {
-            response = eventResult.message || "I've created that calendar event for you."
-          }
-          
-          // Debug log the successful result
-          console.log("Calendar event created successfully:", eventResult);
-        } catch (calendarError: any) {
-          console.error("Calendar event creation error:", calendarError)
-          
-          // If we have a specific message from the server, use it
-          if (calendarError.message && calendarError.message.includes('details":')){
-            try {
-              // Try to extract the message from the error
-              const errorData = JSON.parse(calendarError.message.substring(calendarError.message.indexOf('{')));
-              if (errorData.message) {
-                response = errorData.message;
-              } else {
+            
+            // Debug log the successful result
+            console.log("Calendar event created successfully:", eventResult);
+          } catch (calendarError: any) {
+            console.error("Calendar event creation error:", calendarError)
+            
+            // Check if it's an authentication error
+            if (calendarError.message?.includes('Authentication') || 
+                calendarError.message?.includes('session has expired') ||
+                calendarError.message?.includes('log in again')) {
+              // Authentication error - redirect to login
+              logout();
+              router.push('/login?session_expired=true');
+              return;
+            }
+            
+            // Set error in the message for UI display
+            initialBotMessage.error = calendarError.message || 'Unknown error creating calendar event'
+            
+            // If we have a specific message from the server, use it
+            if (calendarError.message && calendarError.message.includes('details":')){
+              try {
+                // Try to extract the message from the error
+                const errorData = JSON.parse(calendarError.message.substring(calendarError.message.indexOf('{')));
+                if (errorData.message) {
+                  response = errorData.message;
+                } else {
+                  response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
+                }
+              } catch (parseError) {
                 response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
               }
-            } catch (parseError) {
+            } else if (calendarError.message?.includes('Google Calendar authentication required')) {
+              response = "I'd like to create that calendar event for you, but you need to connect to Google Calendar first. Please go to the Calendar page and connect your account.";
+            } else {
               response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
             }
-          } else if (calendarError.message?.includes('Google Calendar authentication required')) {
-            response = "I'd like to create that calendar event for you, but you need to connect to Google Calendar first. Please go to the Calendar page and connect your account.";
-          } else {
-            response = `I couldn't create that calendar event: ${calendarError.message || 'Unknown error'}`;
           }
+        } else {
+          // Normal chat response
+          response = await sendMessage(userMessage.content, user.id)
         }
-      } else {
-        // Normal chat response
-        response = await sendMessage(userMessage.content, user.id)
+      } catch (aiError: any) {
+        console.error("Error getting AI response:", aiError);
+        
+        // Check if it's an authentication error
+        if (aiError.message?.includes('Authentication') || 
+            aiError.message?.includes('session has expired') ||
+            aiError.message?.includes('log in again')) {
+          // Authentication error - redirect to login
+          logout();
+          router.push('/login?session_expired=true');
+          return;
+        }
+        
+        response = "Sorry, I'm having trouble connecting right now. Please try again later.";
+      }
+      
+      // Update the saveConversationMessage call for the assistant message
+      try {
+        console.log("Saving assistant message to database:", response.substring(0, 50) + (response.length > 50 ? "..." : ""));
+        const saveResult = await saveConversationMessage(
+          response,
+          'assistant',
+          {
+            conversationId: activeChatId,
+            isCalendarEvent: isCalendarRequest,
+            hasError: !!initialBotMessage.error,
+            calendarEventDetails: initialBotMessage.calendarEvent,
+            timestamp: new Date().toISOString()
+          }
+        );
+        
+        if (!saveResult.success) {
+          console.warn("Failed to save assistant message:", saveResult.error);
+        } else {
+          console.log("Assistant message saved successfully with ID:", saveResult.id);
+        }
+      } catch (saveError) {
+        console.error("Error saving assistant message:", saveError);
       }
       
       // Check if the response contains calendar event confirmation

@@ -16,7 +16,7 @@ export const login = async (req, res) => {
     const { email, password } = req.body;
     
     // Use a very long session expiration based on environment variable
-    const expirationDays = process.env.JWT_EXPIRATION_DAYS || 90; // Default to 90 days if not specified
+    const expirationDays = process.env.JWT_EXPIRATION_DAYS || 30; // Default to 30 days if not specified
     const expiresIn = expirationDays * 24 * 60 * 60; // Convert days to seconds
     
     console.log(`Creating session with expiration time of ${expirationDays} days`);

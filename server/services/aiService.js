@@ -144,6 +144,260 @@ export async function processNLPTaskStreaming(content, callback, task = 'general
 }
 
 /**
+ * Parse natural language date expressions
+ * @param {string} text - Text containing date information
+ * @returns {string|null} - ISO date string (YYYY-MM-DD) or null if not found
+ */
+function parseNaturalLanguageDate(text) {
+  const today = new Date();
+  
+  // Handle day names (Monday, Tuesday, etc.)
+  const dayNames = {
+    'sunday': 0, 'sun': 0,
+    'monday': 1, 'mon': 1,
+    'tuesday': 2, 'tue': 2, 'tues': 2,
+    'wednesday': 3, 'wed': 3,
+    'thursday': 4, 'thu': 4, 'thurs': 4,
+    'friday': 5, 'fri': 5,
+    'saturday': 6, 'sat': 6
+  };
+  
+  // Handle month names (January, February, etc.)
+  const monthNames = {
+    'january': 0, 'jan': 0,
+    'february': 1, 'feb': 1,
+    'march': 2, 'mar': 2,
+    'april': 3, 'apr': 3,
+    'may': 4,
+    'june': 5, 'jun': 5,
+    'july': 6, 'jul': 6,
+    'august': 7, 'aug': 7,
+    'september': 8, 'sep': 8, 'sept': 8,
+    'october': 9, 'oct': 9,
+    'november': 10, 'nov': 10,
+    'december': 11, 'dec': 11
+  };
+  
+  const lowerText = text.toLowerCase();
+  
+  // 1. Check for "tomorrow", "today", etc.
+  if (lowerText.includes('tomorrow')) {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split('T')[0];
+  }
+  
+  if (lowerText.includes('today')) {
+    return today.toISOString().split('T')[0];
+  }
+  
+  if (lowerText.includes('next week')) {
+    const nextWeek = new Date(today);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    return nextWeek.toISOString().split('T')[0];
+  }
+  
+  // 2. Handle "this coming Monday" or "next Monday"
+  for (const [dayName, dayIndex] of Object.entries(dayNames)) {
+    // Look for expressions like "next Monday" or "this coming Monday"
+    const nextDayMatch = new RegExp(`(?:next|this coming)\\s+${dayName}`, 'i').exec(lowerText);
+    if (nextDayMatch) {
+      const targetDay = dayIndex;
+      const today = new Date();
+      const currentDay = today.getDay();
+      const daysToAdd = (targetDay + 7 - currentDay) % 7 || 7; // If today, push to next week
+      
+      const nextDate = new Date(today);
+      nextDate.setDate(today.getDate() + daysToAdd);
+      return nextDate.toISOString().split('T')[0];
+    }
+    
+    // Just "Monday" typically means the coming Monday
+    const simpleDayMatch = new RegExp(`\\b${dayName}\\b`, 'i').exec(lowerText);
+    if (simpleDayMatch) {
+      const targetDay = dayIndex;
+      const today = new Date();
+      const currentDay = today.getDay();
+      const daysToAdd = (targetDay + 7 - currentDay) % 7;
+      
+      // If today is the mentioned day, use today
+      if (daysToAdd === 0) {
+        return today.toISOString().split('T')[0];
+      }
+      
+      const nextDate = new Date(today);
+      nextDate.setDate(today.getDate() + daysToAdd);
+      return nextDate.toISOString().split('T')[0];
+    }
+  }
+  
+  // 3. Handle month and day formats (e.g., "April 15" or "15th of April")
+  const monthDayPattern = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?\b/i;
+  const monthDayMatch = monthDayPattern.exec(lowerText);
+  
+  if (monthDayMatch) {
+    const monthName = monthDayMatch[1].toLowerCase();
+    const day = parseInt(monthDayMatch[2], 10);
+    const monthIndex = monthNames[monthName] || monthNames[monthName.substring(0, 3)];
+    
+    if (monthIndex !== undefined && day >= 1 && day <= 31) {
+      const year = today.getFullYear();
+      // If the month/day has already passed this year, assume next year
+      const date = new Date(year, monthIndex, day);
+      if (date < today) {
+        date.setFullYear(year + 1);
+      }
+      return date.toISOString().split('T')[0];
+    }
+  }
+  
+  // 4. Handle "day month" format (e.g., "15 April" or "15th of April")
+  const dayMonthPattern = /\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i;
+  const dayMonthMatch = dayMonthPattern.exec(lowerText);
+  
+  if (dayMonthMatch) {
+    const day = parseInt(dayMonthMatch[1], 10);
+    const monthName = dayMonthMatch[2].toLowerCase();
+    const monthIndex = monthNames[monthName] || monthNames[monthName.substring(0, 3)];
+    
+    if (monthIndex !== undefined && day >= 1 && day <= 31) {
+      const year = today.getFullYear();
+      // If the month/day has already passed this year, assume next year
+      const date = new Date(year, monthIndex, day);
+      if (date < today) {
+        date.setFullYear(year + 1);
+      }
+      return date.toISOString().split('T')[0];
+    }
+  }
+  
+  // 5. Handle MM/DD or DD/MM ambiguous formats (always prefer DD/MM)
+  const slashPattern = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/;
+  const slashMatch = slashPattern.exec(lowerText);
+  
+  if (slashMatch) {
+    // Interpret as DD/MM format
+    const day = parseInt(slashMatch[1], 10);
+    const month = parseInt(slashMatch[2], 10) - 1; // JS months are 0-indexed
+    const yearMatch = slashMatch[3];
+    const year = yearMatch ? (yearMatch.length === 2 ? 2000 + parseInt(yearMatch, 10) : parseInt(yearMatch, 10)) : today.getFullYear();
+    
+    // Validate
+    if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+      const date = new Date(year, month, day);
+      return date.toISOString().split('T')[0];
+    }
+  }
+  
+  // 6. Handle ISO format YYYY-MM-DD
+  const isoPattern = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/;
+  const isoMatch = isoPattern.exec(lowerText);
+  
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10) - 1;
+    const day = parseInt(isoMatch[3], 10);
+    
+    if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+      const date = new Date(year, month, day);
+      return date.toISOString().split('T')[0];
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Parse natural language time expressions
+ * @param {string} text - Text containing time information
+ * @returns {string|null} - Time string in HH:MM format or null if not found
+ */
+function parseNaturalLanguageTime(text) {
+  const lowerText = text.toLowerCase();
+  
+  // Common time expressions
+  if (lowerText.includes('noon') || lowerText.includes('12 pm') || lowerText.includes('12pm')) {
+    return '12:00';
+  }
+  
+  if (lowerText.includes('midnight') || lowerText.includes('12 am') || lowerText.includes('12am')) {
+    return '00:00';
+  }
+  
+  // Handle expressions like "in the morning", "afternoon", "evening"
+  if (lowerText.includes('morning')) {
+    return '09:00'; // Default morning time
+  }
+  
+  if (lowerText.includes('afternoon')) {
+    return '14:00'; // Default afternoon time
+  }
+  
+  if (lowerText.includes('evening')) {
+    return '18:00'; // Default evening time
+  }
+  
+  if (lowerText.includes('night')) {
+    return '20:00'; // Default night time
+  }
+  
+  // Handle specific times with different formats
+  
+  // 1. HH:MM format (24-hour)
+  const timePattern24h = /\b(\d{1,2}):(\d{2})\b/;
+  const timeMatch24h = timePattern24h.exec(lowerText);
+  
+  if (timeMatch24h) {
+    const hours = parseInt(timeMatch24h[1], 10);
+    const minutes = timeMatch24h[2];
+    
+    if (hours >= 0 && hours <= 23) {
+      return `${hours.toString().padStart(2, '0')}:${minutes}`;
+    }
+  }
+  
+  // 2. HH:MM AM/PM format
+  const timePatternAMPM = /\b(\d{1,2}):(\d{2})\s*(am|pm)\b/i;
+  const timeMatchAMPM = timePatternAMPM.exec(lowerText);
+  
+  if (timeMatchAMPM) {
+    let hours = parseInt(timeMatchAMPM[1], 10);
+    const minutes = timeMatchAMPM[2];
+    const period = timeMatchAMPM[3].toLowerCase();
+    
+    // Convert to 24-hour format
+    if (period === 'pm' && hours < 12) {
+      hours += 12;
+    } else if (period === 'am' && hours === 12) {
+      hours = 0;
+    }
+    
+    return `${hours.toString().padStart(2, '0')}:${minutes}`;
+  }
+  
+  // 3. H AM/PM format (e.g., "3 pm")
+  const shortTimePatternAMPM = /\b(\d{1,2})\s*(am|pm)\b/i;
+  const shortTimeMatchAMPM = shortTimePatternAMPM.exec(lowerText);
+  
+  if (shortTimeMatchAMPM) {
+    let hours = parseInt(shortTimeMatchAMPM[1], 10);
+    const period = shortTimeMatchAMPM[2].toLowerCase();
+    
+    // Convert to 24-hour format
+    if (period === 'pm' && hours < 12) {
+      hours += 12;
+    } else if (period === 'am' && hours === 12) {
+      hours = 0;
+    }
+    
+    return `${hours.toString().padStart(2, '0')}:00`;
+  }
+  
+  // Default to null if no time found
+  return null;
+}
+
+/**
  * Extract event details specifically for calendar integration
  * @param {string} userMessage - The user's message about the event
  * @returns {Promise<Object>} - Parsed event details (eventName, eventDate, eventTime)
@@ -152,19 +406,50 @@ export async function extractEventDetails(userMessage) {
   try {
     console.log('Extracting event details from:', userMessage);
     
+    // Pre-process the message to fix common date formatting issues
+    const preprocessedMessage = userMessage.replace(/(\d+)\/(\d+)(\d{4})/g, '$1/$2/$3');
+    
+    console.log('Preprocessed message:', preprocessedMessage);
+
+    // Use our custom date and time parsers before calling the AI
+    const extractedDate = parseNaturalLanguageDate(preprocessedMessage);
+    const extractedTime = parseNaturalLanguageTime(preprocessedMessage);
+    
+    if (extractedDate) {
+      console.log('Directly extracted date from message:', extractedDate);
+    }
+    
+    if (extractedTime) {
+      console.log('Directly extracted time from message:', extractedTime);
+    }
+    
     // Create a more specific system prompt for calendar event extraction
-    const systemPrompt = `Extract the event name, date (YYYY-MM-DD), and time (HH:MM) from the following text. 
+    const systemPrompt = `Extract the event name, date, time, and location from the following text. You are an advanced AI that can understand natural language references to dates and times.
+
 Return ONLY the raw JSON with this exact format: 
 {
   "eventName": "The name of the event", 
   "eventDate": "YYYY-MM-DD", 
   "eventTime": "HH:MM",
-  "location": "Location if mentioned, otherwise empty string"
+  "location": "Location if mentioned, otherwise empty string",
+  "description": "Any additional details about the event"
 }
 
-If a date is not explicitly mentioned, use today's date.
-If a time is not mentioned, use "09:00" as the default time.
-If the text mentions relative dates like "tomorrow" or "next Monday", convert them to the appropriate YYYY-MM-DD format.`;
+IMPORTANT INSTRUCTIONS:
+1. For ambiguous date formats (like "3/4"), ALWAYS interpret as "Day/Month" format (April 3), NOT "Month/Day" (March 4)
+2. Accept ANY date format the user provides (MM/DD/YYYY, DD/MM/YYYY, dates like "April 1st", "1st of April", etc.) and convert to YYYY-MM-DD
+3. Understand relative dates like "tomorrow", "next week", "this Friday" and convert them to the appropriate YYYY-MM-DD
+4. Be smart about event names - if the user has a typo in common event types like "brithday" or "partyy", correct it to "birthday" or "party"
+5. If the user is vague about the event name, infer a reasonable name from context
+6. If a date is not explicitly mentioned, use today's date
+7. If a time is not mentioned, use "09:00" as the default time
+8. Determine if the text is describing a calendar event at all. If it's not clearly asking to create or add an event, return a special flag
+
+Remember:
+- ALWAYS interpret ambiguous dates like "3/4" or "5/6" as "day/month" format (April 3, June 5)
+- You can handle dates like "April 1", "1st April", "April 1st 2025", "next Monday", "tomorrow", etc.
+- You can understand phrases like "Schedule a", "Add event", "Create a meeting", etc.
+- Correct common typos in event names and types`;
 
     // Get the Gemini model
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
@@ -172,7 +457,7 @@ If the text mentions relative dates like "tomorrow" or "next Monday", convert th
     // Generate content with the model
     const result = await model.generateContent([
       systemPrompt,
-      userMessage
+      preprocessedMessage
     ]);
     
     const response = result.response;
@@ -191,7 +476,20 @@ If the text mentions relative dates like "tomorrow" or "next Monday", convert th
       const jsonMatch = responseText.match(/(\{[\s\S]*\})/);
       if (jsonMatch && jsonMatch[1]) {
         const parsed = JSON.parse(jsonMatch[1]);
+        
+        // If we have directly extracted values, override the AI results
+        if (extractedDate) {
+          parsed.eventDate = extractedDate;
+        }
+        
+        if (extractedTime) {
+          parsed.eventTime = extractedTime;
+        }
+        
+        // Log the extracted event details with a clear date indicator
         console.log('Extracted event details:', parsed);
+        console.log(`Event date after extraction: ${parsed.eventDate} (${new Date(parsed.eventDate).toLocaleDateString()})`);
+        
         return parsed;
       }
     } catch (e) {
@@ -201,16 +499,137 @@ If the text mentions relative dates like "tomorrow" or "next Monday", convert th
     // Try to parse the whole response as JSON
     try {
       const eventDetails = JSON.parse(responseText);
+      
+      // If we have directly extracted values, override the AI results
+      if (extractedDate) {
+        eventDetails.eventDate = extractedDate;
+      }
+      
+      if (extractedTime) {
+        eventDetails.eventTime = extractedTime;
+      }
+      
+      // Log the extracted event details with a clear date indicator
       console.log('Extracted event details:', eventDetails);
+      console.log(`Event date after extraction: ${eventDetails.eventDate} (${new Date(eventDetails.eventDate).toLocaleDateString()})`);
+      
       return eventDetails;
     } catch (parseError) {
       console.error('Could not parse event details:', parseError);
+      
+      // If we have directly extracted the date and time, create a basic event
+      if (extractedDate) {
+        console.log('Creating fallback event using directly extracted date/time');
+        
+        // Extract a simple event name if possible
+        const eventName = extractEventNameFromMessage(preprocessedMessage) || "New Event";
+        
+        return {
+          eventName: eventName,
+          eventDate: extractedDate,
+          eventTime: extractedTime || "09:00",
+          location: "",
+          description: ""
+        };
+      }
+      
       throw new Error('Could not extract event details from the message');
     }
   } catch (error) {
     console.error('Error extracting event details:', error);
     throw error;
   }
+}
+
+/**
+ * Extract a basic event name from message text
+ * @param {string} text - Message text
+ * @returns {string|null} - Extracted event name or null if not found
+ */
+function extractEventNameFromMessage(text) {
+  const lowerText = text.toLowerCase();
+  
+  // Common event types to look for
+  const eventTypes = [
+    'meeting', 'call', 'appointment', 'interview', 'conference',
+    'party', 'dinner', 'lunch', 'breakfast', 'coffee',
+    'birthday', 'anniversary', 'celebration',
+    'class', 'lecture', 'seminar', 'workshop'
+  ];
+  
+  // Check if any event type is mentioned
+  for (const eventType of eventTypes) {
+    if (lowerText.includes(eventType)) {
+      // Try to extract a more specific name by looking for descriptors before the event type
+      const pattern = new RegExp(`\\b([\\w\\s]{1,20}?)\\s+${eventType}\\b`, 'i');
+      const match = pattern.exec(text);
+      
+      if (match && match[1] && match[1].length > 0 && 
+          !['a', 'an', 'the', 'my', 'our', 'your', 'their', 'new', 'some'].includes(match[1].trim().toLowerCase())) {
+        // Capitalize the first letter of each word
+        const descriptor = match[1].trim().replace(/\b\w/g, c => c.toUpperCase());
+        return `${descriptor} ${eventType.charAt(0).toUpperCase() + eventType.slice(1)}`;
+      }
+      
+      // Just use the event type if no good descriptor
+      return eventType.charAt(0).toUpperCase() + eventType.slice(1);
+    }
+  }
+  
+  // Fallback for when no specific event type is found
+  return "New Event";
+}
+
+/**
+ * Validate and potentially correct ambiguous date formats
+ * @param {Object} eventDetails - The event details to validate
+ * @returns {Object} - Corrected event details
+ */
+function validateAndCorrectEventDate(eventDetails) {
+  if (!eventDetails || !eventDetails.eventDate) {
+    return eventDetails;
+  }
+  
+  console.log('Validating date format for:', eventDetails.eventDate);
+  
+  // Check if the date looks like a valid ISO format
+  const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (isoDateRegex.test(eventDetails.eventDate)) {
+    console.log('Date is in valid ISO format');
+    return eventDetails;
+  }
+  
+  // Try to handle ambiguous formats like MM/DD or DD/MM
+  // We'll assume DD/MM for consistency as specified in our prompt
+  const ambiguousDateRegex = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?$/;
+  const match = eventDetails.eventDate.match(ambiguousDateRegex);
+  
+  if (match) {
+    const firstNumber = parseInt(match[1], 10);
+    const secondNumber = parseInt(match[2], 10);
+    const year = match[3] ? parseInt(match[3], 10) : new Date().getFullYear();
+    
+    // Always interpret as DD/MM/YYYY
+    // Ensure the month is valid (1-12)
+    if (secondNumber >= 1 && secondNumber <= 12) {
+      // Create a new date with day/month/year format
+      const correctedDate = new Date(year, secondNumber - 1, firstNumber);
+      
+      // Format as YYYY-MM-DD
+      const correctedIsoDate = correctedDate.toISOString().split('T')[0];
+      
+      console.log(`Corrected ambiguous date format from ${eventDetails.eventDate} to ${correctedIsoDate} (DD/MM interpretation)`);
+      
+      // Return a new object with the corrected date
+      return {
+        ...eventDetails,
+        eventDate: correctedIsoDate
+      };
+    }
+  }
+  
+  // If we can't correct it, return the original details
+  return eventDetails;
 }
 
 /**
@@ -221,15 +640,128 @@ If the text mentions relative dates like "tomorrow" or "next Monday", convert th
  */
 export async function addEventToCalendar(eventDetails, accessToken) {
   try {
-    console.log('Adding event to calendar with details:', JSON.stringify(eventDetails));
+    console.log('Adding event to calendar with original details:', JSON.stringify(eventDetails));
     
-    if (!eventDetails.eventName || !eventDetails.eventDate || !eventDetails.eventTime) {
+    // Validate and potentially correct date formats
+    const correctedEventDetails = validateAndCorrectEventDate(eventDetails);
+    
+    if (correctedEventDetails !== eventDetails) {
+      console.log('Event details were corrected during validation');
+      eventDetails = correctedEventDetails;
+    }
+    
+    if (!eventDetails.eventName || !eventDetails.eventDate) {
       throw new Error('Missing required event information');
+    }
+    
+    // Default time if not provided
+    if (!eventDetails.eventTime) {
+      console.log('No time provided, defaulting to 9:00 AM');
+      eventDetails.eventTime = '09:00';
+    }
+    
+    // Try to handle more time formats
+    const timeFormats = [
+      // Standard format HH:MM
+      { regex: /^(\d{1,2}):(\d{2})$/, handler: (match) => {
+        const hours = parseInt(match[1], 10);
+        const minutes = match[2];
+        if (hours >= 0 && hours <= 23) {
+          return `${hours.toString().padStart(2, '0')}:${minutes}`;
+        }
+        return null;
+      }},
+      // AM/PM format
+      { regex: /^(\d{1,2}):?(\d{2})?\s*(am|pm)$/i, handler: (match) => {
+        let hours = parseInt(match[1], 10);
+        const minutes = match[2] || '00';
+        const period = match[3].toLowerCase();
+        
+        if (period === 'pm' && hours < 12) {
+          hours += 12;
+        } else if (period === 'am' && hours === 12) {
+          hours = 0;
+        }
+        
+        return `${hours.toString().padStart(2, '0')}:${minutes}`;
+      }},
+      // Simple hour AM/PM
+      { regex: /^(\d{1,2})\s*(am|pm)$/i, handler: (match) => {
+        let hours = parseInt(match[1], 10);
+        const period = match[2].toLowerCase();
+        
+        if (period === 'pm' && hours < 12) {
+          hours += 12;
+        } else if (period === 'am' && hours === 12) {
+          hours = 0;
+        }
+        
+        return `${hours.toString().padStart(2, '0')}:00`;
+      }}
+    ];
+    
+    // Try to normalize the time format
+    if (eventDetails.eventTime && typeof eventDetails.eventTime === 'string') {
+      const timeStr = eventDetails.eventTime.toLowerCase().trim();
+      
+      // Handle special time expressions
+      if (timeStr === 'noon' || timeStr === 'midday') {
+        eventDetails.eventTime = '12:00';
+      } else if (timeStr === 'midnight') {
+        eventDetails.eventTime = '00:00';
+      } else if (timeStr === 'morning') {
+        eventDetails.eventTime = '09:00';
+      } else if (timeStr === 'afternoon') {
+        eventDetails.eventTime = '14:00';
+      } else if (timeStr === 'evening') {
+        eventDetails.eventTime = '18:00';
+      } else if (timeStr === 'night') {
+        eventDetails.eventTime = '20:00';
+      } else {
+        // Try time format converters
+        for (const format of timeFormats) {
+          const match = timeStr.match(format.regex);
+          if (match) {
+            const normalizedTime = format.handler(match);
+            if (normalizedTime) {
+              eventDetails.eventTime = normalizedTime;
+              break;
+            }
+          }
+        }
+      }
     }
     
     // Convert to Google Calendar format
     const startDateTime = new Date(`${eventDetails.eventDate}T${eventDetails.eventTime}:00`);
-    const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000); // 1-hour event
+    
+    // If date conversion failed, try a more flexible approach
+    if (isNaN(startDateTime.getTime())) {
+      console.error('Date parsing failed for:', eventDetails.eventDate, eventDetails.eventTime);
+      
+      // Try alternative date format handling
+      const parsedDate = parseNaturalLanguageDate(eventDetails.eventDate);
+      const parsedTime = parseNaturalLanguageTime(eventDetails.eventTime || '');
+      
+      if (parsedDate && parsedTime) {
+        console.log('Successfully parsed date and time using natural language parsers');
+        const newStartDateTime = new Date(`${parsedDate}T${parsedTime}:00`);
+        
+        if (!isNaN(newStartDateTime.getTime())) {
+          console.log('Fixed date parsing using natural language helpers');
+          eventDetails.eventDate = parsedDate;
+          eventDetails.eventTime = parsedTime;
+          
+          // Try again with corrected values
+          return addEventToCalendar(eventDetails, accessToken);
+        }
+      }
+      
+      throw new Error(`Invalid date format: ${eventDetails.eventDate} or time: ${eventDetails.eventTime}`);
+    }
+    
+    // Default to 1-hour events unless duration is specified
+    const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000); 
     
     console.log('Parsed dates:', {
       startDateTime: startDateTime.toISOString(),
@@ -254,7 +786,6 @@ export async function addEventToCalendar(eventDetails, accessToken) {
     };
     
     console.log('Creating calendar event with formatted event:', JSON.stringify(event));
-    console.log('Using access token (first 10 chars):', accessToken.substring(0, 10) + '...');
     
     // Use the calendarService to create the event
     const result = await calendarService.createCalendarEvent(
@@ -267,10 +798,15 @@ export async function addEventToCalendar(eventDetails, accessToken) {
       console.log('Created event with ID:', result.data.id);
     }
     
+    // Format a nice success message showing the date in a human-readable format
+    const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    const formattedDate = startDateTime.toLocaleDateString(undefined, dateOptions);
+    const formattedTime = startDateTime.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    
     return {
       success: true,
       event: result.data,
-      message: `Event "${eventDetails.eventName}" added to your calendar on ${eventDetails.eventDate} at ${eventDetails.eventTime}`
+      message: `Event "${eventDetails.eventName}" added to your calendar on ${formattedDate} at ${formattedTime}`
     };
   } catch (error) {
     console.error('Error adding event to calendar:', error);

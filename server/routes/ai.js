@@ -74,12 +74,66 @@ router.post('/embed', async (req, res) => {
 router.post('/twin/chat', async (req, res) => {
   try {
     const { message, userId } = req.body;
+    const accessToken = req.headers['authorization']?.split(' ')[1]; // Get auth token
     
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
     
-    // Process the message using the AI service
+    // Check if the message might be a calendar event creation request
+    const calendarKeywords = /\b(add|create|schedule|set up|new|make|put|book)\b.+?\b(event|meeting|appointment|call|reminder|birthday|party)\b/i;
+    const datePatterns = /\b\d{1,2}[-\/\.]\d{1,2}([-\/\.]\d{2,4})?\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{1,2}(st|nd|rd|th)?(,? \d{4})?\b|\b(tomorrow|next week|next month|today)\b/i;
+    
+    const isCalendarRequest = calendarKeywords.test(message) && datePatterns.test(message);
+    console.log(`Message calendar detection: keywords=${calendarKeywords.test(message)}, dates=${datePatterns.test(message)}`);
+    
+    if (isCalendarRequest) {
+      console.log('Detected calendar event request in chat message:', message);
+      
+      // Check if we have Google token in localStorage
+      let googleToken = null;
+      try {
+        // Try to get Google token from Authorization header or request body
+        googleToken = req.headers['x-google-token'] || req.body.googleToken;
+      } catch (e) {
+        console.log('No Google token available:', e);
+      }
+      
+      // If we have a Google token, try to create calendar event
+      if (googleToken) {
+        try {
+          console.log('Attempting to create calendar event from chat message');
+          
+          // Extract event details
+          const eventDetails = await aiService.extractEventDetails(message);
+          
+          if (eventDetails && eventDetails.eventName) {
+            console.log('Successfully extracted event details:', eventDetails);
+            
+            // Create the event
+            const result = await aiService.addEventToCalendar(eventDetails, googleToken);
+            
+            if (result && result.success) {
+              // Response with both calendar confirmation and chat output
+              const aiResponse = await aiService.processNLPTask(message);
+              
+              return res.json({ 
+                response: `${aiResponse}\n\nEvent "${eventDetails.eventName}" has been added to your calendar on ${eventDetails.eventDate}.`,
+                calendarEvent: result.event,
+                eventDetails: eventDetails
+              });
+            }
+          }
+        } catch (calendarError) {
+          console.error('Error creating calendar event from chat:', calendarError);
+          // Continue to normal chat if calendar creation fails
+        }
+      } else {
+        console.log('No Google token available for calendar event creation');
+      }
+    }
+    
+    // Process the message using the AI service (normal chat flow)
     const response = await aiService.processNLPTask(message);
     
     res.json({ response });
@@ -235,27 +289,15 @@ router.post('/twin/simple-calendar-event', async (req, res) => {
       
       console.log('Successfully extracted event details:', eventDetails);
       
-      // Validate the extracted date format (YYYY-MM-DD)
-      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-      if (!dateRegex.test(eventDetails.eventDate)) {
-        console.error('Invalid date format:', eventDetails.eventDate);
+      // Check if the message doesn't seem to be requesting a calendar event
+      if (eventDetails.notCalendarEvent === true) {
         return res.status(400).json({
-          error: 'Invalid date format',
-          message: `The extracted date "${eventDetails.eventDate}" is not in the correct format (YYYY-MM-DD).`
+          error: 'Not recognized as a calendar event request',
+          message: 'Your message doesn\'t appear to be requesting a calendar event. Try using phrases like "add event", "schedule", or "create meeting".'
         });
       }
       
-      // Validate the extracted time format (HH:MM)
-      const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
-      if (!timeRegex.test(eventDetails.eventTime)) {
-        console.error('Invalid time format:', eventDetails.eventTime);
-        return res.status(400).json({
-          error: 'Invalid time format',
-          message: `The extracted time "${eventDetails.eventTime}" is not in the correct format (HH:MM).`
-        });
-      }
-      
-      // Step 2: Add the event to the calendar
+      // Step 2: Add the event to the calendar - let addEventToCalendar handle date validation
       try {
         const result = await aiService.addEventToCalendar(eventDetails, accessToken);
         
@@ -292,7 +334,7 @@ router.post('/twin/simple-calendar-event', async (req, res) => {
         if (calendarError.message && calendarError.message.includes('Invalid date')) {
           return res.status(400).json({
             error: 'Invalid date or time format',
-            message: 'I couldn\'t process the event date and time. Please try again with a clearer date and time format (e.g., "2023-04-15 at 14:30").'
+            message: 'I couldn\'t process the event date and time. Please try again with a clearer date and time format.'
           });
         }
         

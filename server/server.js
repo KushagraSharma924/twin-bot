@@ -13,13 +13,41 @@ import authRoutes from './routes/auth.js';
 import emailRoutes from './routes/email.js';
 import aiRoutes from './routes/ai.js';
 import calendarRoutes from './routes/calendar.js';
+import conversationRoutes from './routes/conversation.js';
 
 // Create Express app
 const app = express();
 const PORT = config.port;
 
+// CORS Configuration
+const corsOptions = {
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+console.log(`CORS enabled for origin: ${corsOptions.origin}`);
+
+// Log all incoming requests in development
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`${req.method} ${req.url} - ${new Date().toISOString()}`);
+    if (req.method === 'OPTIONS') {
+      console.log('Handling OPTIONS preflight request');
+    }
+    next();
+  });
+}
+
+// Handle preflight requests
+app.options('*', cors(corsOptions));
+
 // Middleware
-app.use(cors());
 app.use(express.json());
 
 // Static files
@@ -30,6 +58,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/email', emailMiddleware, emailRoutes);
 app.use('/api/ai', authMiddleware, aiRoutes);
 app.use('/api/calendar', authMiddleware, calendarRoutes);
+app.use('/api/conversations', authMiddleware, conversationRoutes);
 // Use the AI routes for twin functionality
 app.use('/api/twin', authMiddleware, (req, res, next) => {
   // Rewrite the URL path to use our AI endpoints

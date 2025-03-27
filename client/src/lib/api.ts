@@ -925,4 +925,193 @@ export async function getMailboxStats(mailbox: string = 'INBOX'): Promise<{ tota
     console.error('Error getting mailbox stats:', error);
     return { total: 0, unseen: 0, error: true };
   }
+}
+
+/**
+ * Save a conversation message to the database
+ * @param message - The message content
+ * @param source - The source of the message ('user' or 'assistant')
+ * @param userId - The user ID
+ * @param metadata - Optional metadata (conversationId, etc.)
+ * @returns Promise with the result
+ */
+export async function saveConversationMessage(
+  message: string,
+  source: 'user' | 'assistant',
+  metadata: Record<string, any> = {}
+): Promise<{ success: boolean; id?: string; error?: string }> {
+  try {
+    console.log(`Saving ${source} message to conversation history:`, {
+      messagePreview: message.substring(0, 30) + (message.length > 30 ? '...' : ''),
+      metadata: Object.keys(metadata)
+    });
+
+    // Ensure metadata is properly formatted
+    const formattedMetadata = formatMetadata(metadata);
+    
+    // Get session for user ID and token
+    const session = await getSession();
+    if (!session || !session.access_token) {
+      console.error('No authenticated user found when saving conversation message');
+      return { success: false, error: 'Authentication required' };
+    }
+    
+    // Log request details (without sensitive information)
+    console.log('Making request to /api/conversations/add with session');
+    
+    const response = await fetch(`${API_URL}/api/conversations/add`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({
+        message,
+        source,
+        metadata: formattedMetadata
+      })
+    });
+    
+    // Log response status
+    console.log(`Conversation save API returned status: ${response.status}`);
+    
+    // Handle 401 Unauthorized - attempt to refresh token and retry
+    if (response.status === 401) {
+      console.warn('Unauthorized when saving conversation message, attempting token refresh');
+      try {
+        await refreshAccessToken();
+        const refreshedSession = await getSession();
+        
+        if (!refreshedSession?.access_token) {
+          console.error('Failed to refresh token');
+          return { success: false, error: 'Session expired, please login again' };
+        }
+        
+        // Retry the request with new token
+        console.log('Retrying conversation save with refreshed token');
+        const retryResponse = await fetch(`${API_URL}/api/conversations/add`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${refreshedSession.access_token}`
+          },
+          body: JSON.stringify({
+            message,
+            source,
+            metadata: formattedMetadata
+          })
+        });
+        
+        if (!retryResponse.ok) {
+          console.error(`Retry failed with status: ${retryResponse.status}`);
+          
+          // Try to parse error response
+          try {
+            const contentType = retryResponse.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+              const errorData = await retryResponse.json();
+              console.error('Error response from retry:', errorData);
+              return { 
+                success: false, 
+                error: errorData.error || `Server error: ${retryResponse.status}` 
+              };
+            } else {
+              // Handle non-JSON response
+              const textResponse = await retryResponse.text();
+              console.error('Non-JSON error response from retry:', 
+                textResponse.substring(0, 100) + (textResponse.length > 100 ? '...' : ''));
+              return { 
+                success: false, 
+                error: `Server returned non-JSON response: ${retryResponse.status}` 
+              };
+            }
+          } catch (parseError) {
+            console.error('Failed to parse retry error response:', parseError);
+            return { 
+              success: false, 
+              error: `Failed to parse server response: ${retryResponse.status}` 
+            };
+          }
+        }
+        
+        // Parse success response from retry
+        try {
+          const result = await retryResponse.json();
+          console.log('Retry successful, message saved with ID:', result.id);
+          return { success: true, id: result.id };
+        } catch (parseError) {
+          console.error('Failed to parse retry success response:', parseError);
+          return { success: false, error: 'Server returned invalid response format' };
+        }
+      } catch (refreshError) {
+        console.error('Token refresh failed:', refreshError);
+        return { success: false, error: 'Authentication error, please login again' };
+      }
+    }
+    
+    // Handle other error responses
+    if (!response.ok) {
+      console.error(`Error saving conversation message, status: ${response.status}`);
+      
+      // Try to parse error response
+      try {
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const errorData = await response.json();
+          console.error('Error response:', errorData);
+          return { 
+            success: false, 
+            error: errorData.error || `Server error: ${response.status}` 
+          };
+        } else {
+          // Handle non-JSON response
+          const textResponse = await response.text();
+          console.error('Non-JSON error response:', 
+            textResponse.substring(0, 100) + (textResponse.length > 100 ? '...' : ''));
+          return { 
+            success: false, 
+            error: `Server returned non-JSON response: ${response.status}` 
+          };
+        }
+      } catch (parseError) {
+        console.error('Failed to parse error response:', parseError);
+        return { 
+          success: false, 
+          error: `Failed to parse server response: ${response.status}` 
+        };
+      }
+    }
+    
+    // Parse successful response
+    try {
+      const result = await response.json();
+      console.log('Message saved successfully with ID:', result.id);
+      return { success: true, id: result.id };
+    } catch (parseError) {
+      console.error('Failed to parse success response:', parseError);
+      return { success: false, error: 'Server returned invalid response format' };
+    }
+  } catch (error: unknown) {
+    console.error('Exception in saveConversationMessage:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error saving conversation message' 
+    };
+  }
+}
+
+// Helper function to format metadata for conversation storage
+function formatMetadata(metadata: Record<string, any>): Record<string, any> {
+  // If null or undefined, return empty object
+  if (metadata == null) return {};
+  
+  // If already an object, create a copy to avoid mutating original
+  const formattedMetadata = { ...metadata };
+  
+  // Ensure timestamp exists
+  if (!formattedMetadata.timestamp) {
+    formattedMetadata.timestamp = new Date().toISOString();
+  }
+  
+  return formattedMetadata;
 } 

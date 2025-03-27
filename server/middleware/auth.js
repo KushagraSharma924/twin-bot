@@ -32,12 +32,12 @@ export const authMiddleware = async (req, res, next) => {
       // Set the authenticated user on the request object
       req.user = data.user;
       
-      // Create a new session if token is about to expire (within 1 day)
+      // Create a new session if token is about to expire (within 6 hours)
       const session = await supabase.auth.getSession();
       if (session?.data?.session) {
         const expiresAt = new Date(session.data.session.expires_at);
         const now = new Date();
-        const oneDayFromNow = new Date(now.getTime() + (24 * 60 * 60 * 1000)); // 1 day in milliseconds
+        const oneDayFromNow = new Date(now.getTime() + (6 *60 * 60 * 1000)); // 6 hours in milliseconds
         
         if (expiresAt < oneDayFromNow) {
           console.log('Refreshing session token to extend expiration');
