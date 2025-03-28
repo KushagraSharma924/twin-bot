@@ -347,6 +347,18 @@ router.post('/twin/simple-calendar-event', async (req, res) => {
       try {
         const result = await aiService.addEventToCalendar(eventDetails, accessToken);
         
+        // Handle the case where result exists but might indicate failure
+        if (result && result.success === false) {
+          console.log('Calendar service returned a controlled failure', result);
+          
+          // Send a 200 OK with the error message since this is a handled case
+          return res.json({
+            success: false,
+            message: result.message,
+            mockEvent: result.mockEvent || null
+          });
+        }
+        
         if (!result || !result.event) {
           console.error('No event returned from calendar service');
           return res.status(500).json({

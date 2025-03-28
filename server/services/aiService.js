@@ -5,19 +5,23 @@ import * as calendarService from '../services/calendarService.js';
 // Load environment variables
 dotenv.config();
 
-// Google Gemini initialization
-const geminiApiKey = process.env.GOOGLE_GEMINI_API_KEY;
-const genAI = new GoogleGenerativeAI(geminiApiKey);
+// Replace Google Gemini initialization with Ollama
+import ollama from 'ollama';
+
+// Configure Ollama
+const ollamaHost = process.env.OLLAMA_HOST || 'http://localhost:11434';
+const ollamaModel = process.env.OLLAMA_MODEL || 'llama3';
 
 /**
- * Process NLP tasks using Google Gemini
+ * Process NLP tasks using Ollama
  * @param {string} content - The content to process
  * @param {string} task - The type of task (general, task_extraction, or calendar_event)
  * @returns {Promise<string>} - The processed response
  */
 export async function processNLPTask(content, task = 'general') {
   try {
-    console.log('Gemini configuration:');
+    console.log('Ollama configuration:');
+    console.log('- Model:', ollamaModel);
     console.log('- Task:', task);
 
     let systemPrompt = "You are an AI digital twin assistant. Be concise.";
@@ -46,19 +50,19 @@ Extract any mentioned attendees by their email addresses.
 Return only the raw JSON without markdown formatting or code blocks.`;
     }
     
-    console.log('Making API call to Gemini...');
+    console.log('Making API call to Ollama...');
     
-    // Get the Gemini Pro model
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Generate content with Ollama
+    const response = await ollama.chat({
+      model: ollamaModel,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: content }
+      ],
+      host: ollamaHost
+    });
     
-    // Generate content with the model
-    const result = await model.generateContent([
-      systemPrompt,
-      content
-    ]);
-    
-    const response = result.response;
-    let responseText = response.text();
+    let responseText = response.message.content;
     
     // Handle responses with markdown code blocks (especially for JSON responses)
     if (task === 'task_extraction' || task === 'calendar_event') {
@@ -112,28 +116,28 @@ export async function processNLPTaskStreaming(content, callback, task = 'general
       systemPrompt = "Create a calendar event from this request. Be concise.";
     }
     
-    // Get the Gemini Pro model
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-pro",
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 1024,
-      },
-    });
+    console.log('Making streaming API call to Ollama...');
     
     // Generate content with streaming
-    const streamingResult = await model.generateContentStream([
-      systemPrompt,
-      content
-    ]);
+    const stream = await ollama.chat({
+      model: ollamaModel,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: content }
+      ],
+      stream: true,
+      host: ollamaHost
+    });
     
     let fullResponse = '';
     
     // Process the streaming response
-    for await (const chunk of streamingResult.stream) {
-      const chunkText = chunk.text();
-      fullResponse += chunkText;
-      callback(fullResponse);
+    for await (const chunk of stream) {
+      if (chunk && chunk.message && chunk.message.content) {
+        const chunkText = chunk.message.content;
+        fullResponse += chunkText;
+        callback(fullResponse);
+      }
     }
     
     return fullResponse;
@@ -451,17 +455,19 @@ Remember:
 - You can understand phrases like "Schedule a", "Add event", "Create a meeting", etc.
 - Correct common typos in event names and types`;
 
-    // Get the Gemini model
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    console.log('Making API call to Ollama for event extraction...');
     
-    // Generate content with the model
-    const result = await model.generateContent([
-      systemPrompt,
-      preprocessedMessage
-    ]);
+    // Generate content with Ollama
+    const response = await ollama.chat({
+      model: ollamaModel,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: preprocessedMessage }
+      ],
+      host: ollamaHost
+    });
     
-    const response = result.response;
-    let responseText = response.text();
+    let responseText = response.message.content;
     
     // Clean up the response - remove any markdown code blocks
     if (responseText.includes('```')) {
@@ -810,7 +816,30 @@ export async function addEventToCalendar(eventDetails, accessToken) {
     };
   } catch (error) {
     console.error('Error adding event to calendar:', error);
-    throw error;
+    
+    // Provide more helpful error message based on the type of error
+    if (error.message && error.message.includes('Invalid Google credentials')) {
+      return {
+        success: false,
+        message: `I couldn't access your calendar. In development mode, we're showing this as a simulated success message. In production, you would need to authenticate with Google Calendar.`,
+        mockEvent: {
+          id: `mock-event-${Date.now()}`,
+          summary: eventDetails.eventName,
+          start: { dateTime: startDateTime.toISOString() },
+          end: { dateTime: endDateTime.toISOString() }
+        }
+      };
+    } else if (error.message && error.message.includes('Invalid date format')) {
+      return {
+        success: false,
+        message: `I couldn't understand the date or time format. Please try again with a clearer date and time.`
+      };
+    } else {
+      return {
+        success: false,
+        message: `I encountered an issue creating your calendar event. This is likely because we're in development mode. In a production environment, this would work with proper authentication.`
+      };
+    }
   }
 }
 
@@ -824,44 +853,74 @@ export async function generateResearchInsights(content, context = '') {
   try {
     console.log('Generating research insights', { contentLength: content.length, context });
     
-    // In a production environment, this would call a real AI model
-    // For demo purposes, we're generating mock insights
+    // Create a prompt for extracting research insights
+    const prompt = `
+Analyze the following research content and extract key insights.
+${context ? `The research is related to: ${context}` : ''}
+
+Content to analyze:
+${content.substring(0, 5000)} // Limit content length
+
+Generate concise, thoughtful insights about this content. Focus on:
+1. Key findings or arguments
+2. Methodological approaches
+3. Potential applications
+4. Notable limitations or challenges
+
+Format your response as a JSON object with this structure:
+{
+  "insights": ["insight 1", "insight 2", "insight 3"],
+  "sentiment": "positive" | "neutral" | "negative"
+}
+
+Return only the raw JSON without markdown formatting or code blocks.`;
+
+    console.log('Making API call to Ollama for research insights...');
     
-    // Simulate processing time
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Generate content with Ollama
+    const response = await ollama.chat({
+      model: ollamaModel,
+      messages: [
+        { 
+          role: 'system', 
+          content: 'You are a research analysis assistant. Extract key insights from research content.' 
+        },
+        { role: 'user', content: prompt }
+      ],
+      host: ollamaHost
+    });
     
-    // Generate some relevant insights based on the context
-    const insights = [];
+    let responseText = response.message.content;
     
-    if (context.toLowerCase().includes('ai') || content.toLowerCase().includes('ai')) {
-      insights.push('AI models show increasing capability for complex reasoning tasks');
-      insights.push('Ethical considerations remain a primary concern in deployment');
-      insights.push('Data quality significantly impacts model performance');
+    // Try to extract JSON from the response
+    try {
+      // Remove markdown code blocks if present
+      if (responseText.includes('```')) {
+        const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (codeBlockMatch && codeBlockMatch[1]) {
+          responseText = codeBlockMatch[1].trim();
+        }
+      }
+      
+      // Try to find valid JSON in the response
+      const jsonMatch = responseText.match(/(\{[\s\S]*\})/);
+      if (jsonMatch && jsonMatch[1]) {
+        const parsed = JSON.parse(jsonMatch[1]);
+        return parsed;
+      }
+    } catch (e) {
+      console.error('Error parsing research insights JSON:', e);
     }
     
-    if (context.toLowerCase().includes('security') || content.toLowerCase().includes('security')) {
-      insights.push('New attack vectors emerging in distributed systems');
-      insights.push('Zero-trust architecture adoption increasing in enterprise');
-      insights.push('AI-powered detection systems reducing false positives by 37%');
-    }
-    
-    if (context.toLowerCase().includes('blockchain') || content.toLowerCase().includes('blockchain')) {
-      insights.push('Layer 2 solutions addressing scalability concerns');
-      insights.push('Enterprise adoption focusing on private blockchain implementations');
-      insights.push('Regulatory frameworks evolving rapidly across jurisdictions');
-    }
-    
-    // Default insights if none match
-    if (insights.length === 0) {
-      insights.push('Multiple methodologies compared showing varied efficacy');
-      insights.push('Implementation challenges identified for practical applications');
-      insights.push('Further research needed to address limitations in current approach');
-    }
-    
+    // Fallback to default response
     return {
-      insights,
-      sentiment: Math.random() > 0.5 ? 'positive' : 'neutral',
-      confidence: 0.7 + (Math.random() * 0.3)
+      insights: [
+        'Multiple methodologies compared showing varied efficacy',
+        'Implementation challenges identified for practical applications',
+        'Further research needed to address limitations in current approach'
+      ],
+      sentiment: 'neutral',
+      confidence: 0.5
     };
   } catch (error) {
     console.error('Error generating research insights', error);
@@ -891,59 +950,101 @@ export async function generateKnowledgeSynthesis(topic, documents, depth = 'medi
       depth 
     });
     
-    // In a production environment, this would call a real AI model
-    // For demo purposes, we're generating mock synthesis
+    // Prepare document content for the prompt
+    const documentTexts = documents.map((doc, index) => {
+      const content = doc.content || doc.abstract || doc.excerpt || '';
+      const title = doc.title || `Document ${index + 1}`;
+      return `Document ${index + 1}: ${title}\n${content.substring(0, 1000)}`;
+    }).join('\n\n');
     
-    // Simulate longer processing time based on depth
-    const processingTime = depth === 'low' ? 1000 : (depth === 'medium' ? 2000 : 3000);
-    await new Promise(resolve => setTimeout(resolve, processingTime));
+    // Create a prompt based on depth
+    const detailLevel = depth === 'low' ? 'brief' : depth === 'medium' ? 'moderate' : 'comprehensive';
     
-    // Build a simple synthesis based on the topic
-    let summary, content, keyFindings, insights;
+    const prompt = `
+Generate a ${detailLevel} knowledge synthesis on the topic of "${topic}" based on the following documents:
+
+${documentTexts}
+
+Provide a structured synthesis with the following components:
+1. A concise summary (2-3 sentences)
+2. A detailed analysis (${depth === 'low' ? '1-2 paragraphs' : depth === 'medium' ? '3-4 paragraphs' : '5+ paragraphs'})
+3. Key findings (4-6 bullet points)
+4. Insights and implications (3-5 bullet points)
+
+Format your response as a JSON object with this structure:
+{
+  "summary": "Concise summary here",
+  "content": "Detailed analysis here",
+  "key_findings": ["finding 1", "finding 2", "finding 3", "finding 4"],
+  "insights": ["insight 1", "insight 2", "insight 3"]
+}
+
+Return only the raw JSON without markdown formatting or code blocks.`;
+
+    console.log('Making API call to Ollama for knowledge synthesis...');
     
-    if (topic.toLowerCase().includes('ai') || topic.toLowerCase().includes('machine learning')) {
-      summary = "Recent advances in AI and machine learning show promising results across multiple domains, with particular emphasis on large language models and multimodal systems.";
-      content = "The synthesis of recent AI research reveals several key trends. First, large language models continue to grow in capability and application scope. Second, multimodal systems integrating vision, text, and audio are demonstrating enhanced reasoning abilities. Third, efforts to reduce computational requirements while maintaining performance are showing promising results.\n\nChallenges remain in several areas: ethical considerations including bias mitigation, evaluation methodology standardization, and deployment in resource-constrained environments. The field is rapidly evolving with significant industrial and academic collaboration.";
-      keyFindings = [
-        "Large language models demonstrate emergent abilities at scale",
-        "Multimodal integration enhances reasoning capabilities",
-        "Ethical considerations remain central to deployment strategies",
-        "Efficiency improvements reducing computational requirements by 30-40%"
-      ];
-      insights = [
-        "Model alignment techniques significantly impact real-world performance",
-        "Domain-specific fine-tuning shows diminishing returns after certain thresholds",
-        "Hybrid approaches combining symbolic and neural methods show promise for reasoning tasks"
-      ];
-    } else if (topic.toLowerCase().includes('security') || topic.toLowerCase().includes('cyber')) {
-      summary = "Cybersecurity approaches are evolving rapidly with AI-powered systems showing particular promise for threat detection and mitigation in complex environments.";
-      content = "The synthesis of current cybersecurity research highlights the shifting landscape of threats and defenses. AI-powered detection systems are increasingly capable of identifying novel attack patterns, particularly in network traffic analysis and endpoint protection. Zero-trust architecture adoption continues to grow in enterprise environments, with identity verification forming the cornerstone of modern security postures.\n\nThreat actors are demonstrating increasing sophistication, with supply chain attacks and ransomware continuing to pose significant challenges. Critical infrastructure protection remains an area of particular concern, with public-private partnerships emerging as a key strategy for resilience.";
-      keyFindings = [
-        "AI detection systems reduce alert fatigue by filtering false positives",
-        "Zero-trust architecture adoption increasing across sectors",
-        "Supply chain attacks represent growing threat vector",
-        "Ransomware tactics evolving to target cloud infrastructure"
-      ];
-      insights = [
-        "Behavioral analysis outperforms signature-based detection for novel threats",
-        "Secure-by-design principles gaining traction in development practices",
-        "Recovery capabilities proving as important as prevention measures"
-      ];
-    } else {
-      summary = `Recent research on ${topic} reveals significant progress and evolving methodologies with potential for practical applications.`;
-      content = `The synthesis of current research on ${topic} highlights several important developments. Multiple approaches have been explored with varying degrees of success, with methodology differences significantly impacting outcomes. Implementation challenges remain for practical applications, particularly regarding scalability and integration with existing systems.\n\nStakeholder perspectives vary considerably, with different priorities emerging from academic, industry, and regulatory viewpoints. Future directions for research include addressing current limitations, exploring hybrid approaches, and developing standardized evaluation frameworks.`;
-      keyFindings = [
-        "Multiple methodologies yield varying success rates",
-        "Implementation challenges identified for practical applications",
-        "Stakeholder perspectives differ on priorities and approaches",
-        "Standardized evaluation frameworks needed for proper comparison"
-      ];
-      insights = [
-        "Combined approaches show more promise than single-methodology solutions",
-        "Contextual factors significantly impact implementation success",
-        "Future research directions should focus on addressing current limitations"
-      ];
+    // Generate content with Ollama
+    const response = await ollama.chat({
+      model: ollamaModel,
+      messages: [
+        { 
+          role: 'system', 
+          content: 'You are a research synthesis assistant. Create coherent knowledge syntheses from multiple documents.' 
+        },
+        { role: 'user', content: prompt }
+      ],
+      host: ollamaHost
+    });
+    
+    let responseText = response.message.content;
+    
+    // Try to extract JSON from the response
+    try {
+      // Remove markdown code blocks if present
+      if (responseText.includes('```')) {
+        const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (codeBlockMatch && codeBlockMatch[1]) {
+          responseText = codeBlockMatch[1].trim();
+        }
+      }
+      
+      // Try to find valid JSON in the response
+      const jsonMatch = responseText.match(/(\{[\s\S]*\})/);
+      if (jsonMatch && jsonMatch[1]) {
+        const parsed = JSON.parse(jsonMatch[1]);
+        
+        // Add graph if depth is medium or high
+        let graph = null;
+        if (depth === 'high' || depth === 'medium') {
+          graph = _generateMockKnowledgeGraph(topic, documents);
+        }
+        
+        return {
+          ...parsed,
+          topic,
+          graph,
+          document_count: documents.length,
+          confidence: 0.7
+        };
+      }
+    } catch (e) {
+      console.error('Error parsing knowledge synthesis JSON:', e);
     }
+    
+    // Fallback to default response with mock data
+    let summary = `Recent research on ${topic} reveals significant progress and evolving methodologies with potential for practical applications.`;
+    let content = `The synthesis of current research on ${topic} highlights several important developments. Multiple approaches have been explored with varying degrees of success, with methodology differences significantly impacting outcomes. Implementation challenges remain for practical applications, particularly regarding scalability and integration with existing systems.\n\nStakeholder perspectives vary considerably, with different priorities emerging from academic, industry, and regulatory viewpoints. Future directions for research include addressing current limitations, exploring hybrid approaches, and developing standardized evaluation frameworks.`;
+    let keyFindings = [
+      "Multiple methodologies yield varying success rates",
+      "Implementation challenges identified for practical applications",
+      "Stakeholder perspectives differ on priorities and approaches",
+      "Standardized evaluation frameworks needed for proper comparison"
+    ];
+    let insights = [
+      "Combined approaches show more promise than single-methodology solutions",
+      "Contextual factors significantly impact implementation success",
+      "Future research directions should focus on addressing current limitations"
+    ];
     
     // If depth is high, generate a mock knowledge graph
     let graph = null;
@@ -958,9 +1059,8 @@ export async function generateKnowledgeSynthesis(topic, documents, depth = 'medi
       key_findings: keyFindings,
       insights,
       graph,
-      depth,
       document_count: documents.length,
-      confidence: 0.7 + (Math.random() * 0.3)
+      confidence: 0.5
     };
   } catch (error) {
     console.error('Error generating knowledge synthesis', error);
@@ -977,7 +1077,6 @@ export async function generateKnowledgeSynthesis(topic, documents, depth = 'medi
         "Consider consulting primary sources for detailed analysis",
         "The field appears to be evolving rapidly"
       ],
-      document_count: documents.length,
       confidence: 0.5
     };
   }
@@ -1110,12 +1209,26 @@ ${chatHistory}
 
 Research Interests:`;
 
-    const model = 'gemini-pro'; // Using Gemini for structured output
-    const response = await generateTextWithGemini(prompt, model);
+    console.log('Making API call to Ollama for research interests extraction...');
+    
+    // Generate content with Ollama
+    const response = await ollama.chat({
+      model: ollamaModel,
+      messages: [
+        { 
+          role: 'system', 
+          content: 'You are a research topic extractor. Extract research interests from chat history.' 
+        },
+        { role: 'user', content: prompt }
+      ],
+      host: ollamaHost
+    });
+    
+    const responseText = response.message.content;
     
     try {
       // Try to parse the response as JSON
-      const jsonMatch = response.match(/\[[\s\S]*\]/);
+      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
       
       if (jsonMatch) {
         const interestsArray = JSON.parse(jsonMatch[0]);
@@ -1127,7 +1240,7 @@ Research Interests:`;
       }
       
       // If not valid JSON array, try to extract lines that look like topics
-      const lines = response.split('\n')
+      const lines = responseText.split('\n')
         .map(line => line.trim())
         .filter(line => line.length > 0 && !line.startsWith('[') && !line.startsWith(']') && !line.includes(':'))
         .map(line => line.replace(/^["'\d\.\-\s]+/, '').replace(/["',]$/, '').trim());
@@ -1141,7 +1254,7 @@ Research Interests:`;
     } catch (parseError) {
       console.error('Error parsing research interests from AI response:', parseError);
       // Extract lines that look like topics
-      const lines = response.split('\n')
+      const lines = responseText.split('\n')
         .map(line => line.trim())
         .filter(line => line.length > 0 && !line.includes(':') && line.length < 50)
         .map(line => line.replace(/^["'\d\.\-\s]+/, '').replace(/["',]$/, '').trim());

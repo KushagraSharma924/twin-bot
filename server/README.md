@@ -47,6 +47,40 @@ Service modules contain reusable business logic:
 - `services/supabaseService.js` - Database operations
 - `services/reinforcementLearningService.js` - ML/RL functionality
 
+## Ollama Integration
+
+The AI service now supports using Ollama LLM for all AI functions. This allows you to run the AI model locally instead of relying on cloud-based services like Google Gemini.
+
+### Setup Ollama
+
+1. Install Ollama by following instructions at [https://ollama.ai/](https://ollama.ai/)
+2. Start the Ollama service locally
+3. Pull a model (e.g., `ollama pull llama3`)
+
+### Configuration
+
+Configure the Ollama settings in the `.env` file:
+
+```
+# Ollama Configuration
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=llama3
+```
+
+- `OLLAMA_HOST`: The URL where your Ollama server is running
+- `OLLAMA_MODEL`: The name of the model you want to use (must be pulled locally)
+
+### Available Models
+
+You can use any model that Ollama supports, such as:
+- llama3
+- mistral
+- vicuna
+- gemma
+- etc.
+
+To use a different model, just update the `OLLAMA_MODEL` environment variable or pull a new model with `ollama pull <model-name>`.
+
 ## Running the Server
 
 ```bash
