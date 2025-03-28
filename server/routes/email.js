@@ -65,6 +65,7 @@ async function prepareEmailCredentials(userId, baseCredentials = {}) {
       if (expiresAt <= now && tokenData.refresh_token) {
         // Token expired, refresh it
         try {
+          console.log('Refreshing expired OAuth token...');
           const refreshedTokens = await emailService.refreshOAuth2Token({
             provider: tokenData.provider,
             refreshToken: tokenData.refresh_token
@@ -81,29 +82,55 @@ async function prepareEmailCredentials(userId, baseCredentials = {}) {
             })
             .eq('id', tokenData.id);
             
-          // Use refreshed tokens
+          console.log('OAuth token refreshed successfully');
+          
+          // Use refreshed tokens - format exactly as ImapFlow expects
           emailConfig.oauth2 = {
+            user: emailConfig.user,
             accessToken: refreshedTokens.accessToken,
             refreshToken: refreshedTokens.refreshToken || tokenData.refresh_token,
-            expiresAt: refreshedTokens.expiresAt,
+            expires: refreshedTokens.expiresAt, // Note: 'expires' not 'expiresAt' for ImapFlow
             // Add OAuth provider-specific client details
             clientId: process.env[`${tokenData.provider.toUpperCase()}_CLIENT_ID`],
             clientSecret: process.env[`${tokenData.provider.toUpperCase()}_CLIENT_SECRET`]
           };
+          
+          // Debug what we're sending
+          console.log('oauth2Info:', {
+            hasAccessToken: !!emailConfig.oauth2.accessToken,
+            hasRefreshToken: !!emailConfig.oauth2.refreshToken,
+            accessTokenLength: emailConfig.oauth2.accessToken?.length,
+            refreshTokenLength: emailConfig.oauth2.refreshToken?.length,
+            hasClientId: !!emailConfig.oauth2.clientId,
+            hasClientSecret: !!emailConfig.oauth2.clientSecret,
+            expiresAt: new Date(emailConfig.oauth2.expires).toISOString()
+          });
         } catch (refreshError) {
           console.error('Error refreshing OAuth token:', refreshError);
           throw new Error('Failed to refresh OAuth token. Please reconnect your email account.');
         }
       } else if (expiresAt > now) {
-        // Token still valid, use it
+        // Token still valid, use it - format exactly as ImapFlow expects
         emailConfig.oauth2 = {
+          user: emailConfig.user,
           accessToken: tokenData.access_token,
           refreshToken: tokenData.refresh_token,
-          expiresAt: new Date(tokenData.expires_at).getTime(),
+          expires: new Date(tokenData.expires_at).getTime(), // Note: 'expires' not 'expiresAt' for ImapFlow
           // Add OAuth provider-specific client details
           clientId: process.env[`${tokenData.provider.toUpperCase()}_CLIENT_ID`],
           clientSecret: process.env[`${tokenData.provider.toUpperCase()}_CLIENT_SECRET`]
         };
+        
+        // Debug what we're sending
+        console.log('oauth2Info:', {
+          hasAccessToken: !!emailConfig.oauth2.accessToken,
+          hasRefreshToken: !!emailConfig.oauth2.refreshToken,
+          accessTokenLength: emailConfig.oauth2.accessToken?.length,
+          refreshTokenLength: emailConfig.oauth2.refreshToken?.length,
+          hasClientId: !!emailConfig.oauth2.clientId,
+          hasClientSecret: !!emailConfig.oauth2.clientSecret,
+          expiresAt: new Date(emailConfig.oauth2.expires).toISOString()
+        });
       } else {
         // Token expired and no refresh token
         throw new Error('OAuth token expired and no refresh token available. Please reconnect your email account.');
@@ -135,8 +162,53 @@ router.post('/fetch', async (req, res) => {
     // Prepare full credentials including OAuth if available
     const fullCredentials = await prepareEmailCredentials(userId, baseCredentials);
     
+    // Set a response timeout to handle potential IMAP server lag
+    let timeoutId = setTimeout(() => {
+      console.error('API timeout: Email fetch taking too long');
+      if (!res.headersSent) {
+        res.status(504).json({ 
+          error: 'Request timed out',
+          message: 'The email server is taking too long to respond. Try again with a smaller limit or check your connection.'
+        });
+      }
+    }, 240000); // 4 minutes timeout
+    
     // Fetch emails using the service
-    const emails = await emailService.fetchEmails(fullCredentials, options);
+    const emails = await emailService.fetchEmails(fullCredentials, options)
+      .catch(error => {
+        console.error('Email fetch error details:', {
+          message: error.message,
+          code: error.code,
+          name: error.name,
+          stack: error.stack
+        });
+        
+        clearTimeout(timeoutId);
+        
+        // Handle common IMAP/network errors
+        if (error.code === 'ECONNRESET' || error.code === 'ENOTFOUND' || error.code === 'ESOCKET' || 
+            error.message.includes('socket hang up') || error.message.includes('socket timeout')) {
+          throw {
+            status: 503,
+            message: 'Connection to email server failed. Please try again later.'
+          };
+        } else if (error.code === 'ETIMEDOUT' || error.message.includes('timeout')) {
+          throw {
+            status: 504,
+            message: 'Connection to email server timed out. Try with a smaller limit or check your network.'
+          };
+        } else if (error.authenticationFailed || error.message.includes('Invalid credentials')) {
+          throw {
+            status: 401,
+            message: 'Email authentication failed. Please check your credentials and try again.'
+          };
+        }
+        
+        throw error;
+      });
+    
+    // Clear the timeout since we got a response
+    clearTimeout(timeoutId);
     
     // Save metadata if requested
     if (saveMetadata && emails.length > 0) {
@@ -165,7 +237,17 @@ router.post('/fetch', async (req, res) => {
     res.json({ emails });
   } catch (error) {
     console.error('Error fetching emails:', error);
-    res.status(500).json({ error: error.message });
+    
+    // Check if this is a structured error from our catch block
+    if (error.status && error.message) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    
+    // Handle other general errors
+    const errorMessage = error.message || 'An unexpected error occurred while fetching emails';
+    const statusCode = error.statusCode || 500;
+    
+    res.status(statusCode).json({ error: errorMessage });
   }
 });
 

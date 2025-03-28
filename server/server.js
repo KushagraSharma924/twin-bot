@@ -20,6 +20,17 @@ import researchRoutes from './routes/research.js';
 const app = express();
 const PORT = config.port;
 
+// Set server timeout settings for handling large email fetches
+app.use((req, res, next) => {
+  // Increase timeout for email endpoints to 5 minutes
+  if (req.url.startsWith('/api/email')) {
+    // Set timeout to 5 minutes (300,000 ms)
+    req.setTimeout(300000);
+    res.setTimeout(300000);
+  }
+  next();
+});
+
 // CORS Configuration
 const corsOptions = {
   origin: process.env.CLIENT_URL || 'http://localhost:3000',

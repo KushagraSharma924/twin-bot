@@ -18,6 +18,42 @@ export function createImapClient(credentials) {
     authMethod: credentials.oauth2 ? 'oauth2' : 'password'
   });
   
+  // Detect if this is Gmail
+  const isGmail = credentials.host.includes('gmail') || credentials.provider === 'gmail';
+  
+  // Common configuration for both auth methods
+  const config = {
+    host: credentials.host,
+    port: credentials.port || 993,
+    secure: credentials.secure !== false,
+    // Add timeout configurations to prevent socket hangups
+    tls: {
+      rejectUnauthorized: true,
+      // Increase TLS socket timeout to 60 seconds (default is too low)
+      socketTimeout: 60000
+    },
+    // Add IMAP-specific timeouts
+    imap: {
+      // Increase idle timeout to 10 minutes (in ms)
+      idleTimeout: 600000,
+      // Increase the maximum time to wait for commands to complete
+      commandTimeout: 30000
+    },
+    logger: false
+  };
+  
+  // Gmail-specific settings
+  if (isGmail) {
+    // Gmail requires these specific settings for better compatibility
+    config.auth = {
+      ...config.auth,
+      user: credentials.user
+    };
+    
+    // Special handling for Gmail
+    console.log('Using Gmail-specific IMAP settings');
+  }
+  
   // Check if we're using OAuth2 or password authentication
   if (credentials.oauth2) {
     // Validate OAuth2 credentials
@@ -29,21 +65,42 @@ export function createImapClient(credentials) {
       throw new Error('User email is required for OAuth2 authentication');
     }
     
+    // Format auth object properly for ImapFlow - it's format sensitive
+    const auth = {
+      user: credentials.user,
+      accessToken: credentials.oauth2.accessToken
+    };
+    
+    // Optional OAuth properties
+    if (credentials.oauth2.refreshToken) {
+      auth.refreshToken = credentials.oauth2.refreshToken;
+    }
+    
+    if (credentials.oauth2.expires) {
+      auth.expires = credentials.oauth2.expires;
+    }
+    
+    if (credentials.oauth2.clientId) {
+      auth.clientId = credentials.oauth2.clientId;
+    }
+    
+    if (credentials.oauth2.clientSecret) {
+      auth.clientSecret = credentials.oauth2.clientSecret;
+    }
+    
+    console.log('Creating IMAP client with OAuth2 configuration:', {
+      user: auth.user,
+      hasAccessToken: !!auth.accessToken,
+      hasRefreshToken: !!auth.refreshToken,
+      hasExpires: !!auth.expires,
+      expiresIn: auth.expires ? Math.round((auth.expires - Date.now()) / 1000) + ' seconds' : 'unknown',
+      hasClientId: !!auth.clientId,
+      hasClientSecret: !!auth.clientSecret
+    });
+    
     return new ImapFlow({
-      host: credentials.host,
-      port: credentials.port || 993,
-      secure: credentials.secure !== false,
-      auth: {
-        user: credentials.user,
-        // Use OAuth2 authentication
-        accessToken: credentials.oauth2.accessToken,
-        // Optional refresh token handling
-        expires: credentials.oauth2.expiresAt,
-        refreshToken: credentials.oauth2.refreshToken,
-        clientId: credentials.oauth2.clientId,
-        clientSecret: credentials.oauth2.clientSecret
-      },
-      logger: false
+      ...config,
+      auth
     });
   } else {
     // Validate password credentials
@@ -57,14 +114,11 @@ export function createImapClient(credentials) {
     
     // Fall back to password authentication for providers that don't support OAuth
     return new ImapFlow({
-      host: credentials.host,
-      port: credentials.port || 993,
-      secure: credentials.secure !== false,
+      ...config,
       auth: {
         user: credentials.user,
         pass: credentials.password
-      },
-      logger: false
+      }
     });
   }
 }
@@ -116,6 +170,13 @@ export async function fetchEmails(credentials, options = {}) {
   const client = createImapClient(credentials);
   
   try {
+    // Set a timeout for the entire operation (3 minutes)
+    const operationTimeout = setTimeout(() => {
+      console.error('Email fetch operation timed out after 3 minutes');
+      client.close().catch(err => console.error('Error closing client on timeout:', err));
+      throw new Error('Email fetch operation timed out');
+    }, 180000);
+    
     // Connect to the server
     console.log('Connecting to IMAP server...');
     await client.connect();
@@ -139,6 +200,9 @@ export async function fetchEmails(credentials, options = {}) {
         };
         mailboxPath = gmailMailboxMap[mailbox.toUpperCase()] || mailbox;
       }
+      
+      // For Gmail, we need specific search options
+      console.log('Using Gmail-specific search approach');
     }
     
     // Select the mailbox to open
@@ -167,6 +231,9 @@ export async function fetchEmails(credentials, options = {}) {
       searchOptions.searchCriteria = [['UNSEEN']];
       console.log('Searching for UNSEEN emails only');
     } else {
+      // For Gmail, we need to use ALL search criteria to get all emails
+      // Otherwise, ImapFlow might use default criteria that excludes some messages
+      searchOptions.searchCriteria = [['ALL']];
       console.log('Searching for ALL emails (including read)');
     }
     
@@ -176,61 +243,173 @@ export async function fetchEmails(credentials, options = {}) {
     let count = 0;
     
     console.log('Fetching emails...');
-    for await (const message of client.fetch(searchOptions, { envelope: true, source: true, flags: true })) {
-      count++;
-      console.log(`Processing email ${count} with UID: ${message.uid}`);
+    // Use a try/catch inside the fetch loop to handle errors with individual messages
+    try {
+      for await (const message of client.fetch(searchOptions, { envelope: true, source: true, flags: true })) {
+        count++;
+        console.log(`Processing email ${count} with UID: ${message.uid}`);
+        
+        try {
+          // Get email content
+          const parsed = await simpleParser(message.source);
+          
+          // Extract relevant information
+          const email = {
+            id: message.uid,
+            messageId: parsed.messageId,
+            subject: parsed.subject,
+            from: parsed.from?.text,
+            to: parsed.to?.text,
+            date: parsed.date,
+            receivedDate: parsed.receivedDate,
+            text: parsed.text,
+            html: parsed.html,
+            attachments: parsed.attachments.map(attachment => ({
+              filename: attachment.filename,
+              contentType: attachment.contentType,
+              size: attachment.size
+            })),
+            flags: message.flags,
+            mailbox: mailboxPath // Add mailbox information
+          };
+          
+          emails.push(email);
+        } catch (parseError) {
+          console.error(`Error parsing email ${message.uid}:`, parseError);
+          // Continue with next email instead of failing the entire request
+          continue;
+        }
+      }
+    } catch (fetchError) {
+      console.error('Error during fetch loop:', fetchError);
+      // If we have at least some emails, return them instead of failing
+      if (emails.length > 0) {
+        console.log(`Fetch partially completed. Returning ${emails.length} emails that were successfully fetched.`);
+        return emails;
+      }
+      throw fetchError; // Re-throw if we couldn't get any emails
+    }
+    
+    // If no emails were found but it's Gmail, try an alternative approach
+    if (emails.length === 0 && isGmail) {
+      console.log('No emails found with standard approach. Trying Gmail-specific approach...');
       
-      try {
-        // Get email content
-        const parsed = await simpleParser(message.source);
+      // For Gmail, we'll use sequence numbers instead of search criteria
+      // This often works better with Gmail's IMAP implementation
+      const total = mailboxInfo.exists;
+      
+      if (total > 0) {
+        // Calculate range: start from most recent messages
+        const start = Math.max(total - limit + 1, 1);
+        const end = total;
         
-        // Extract relevant information
-        const email = {
-          id: message.uid,
-          messageId: parsed.messageId,
-          subject: parsed.subject,
-          from: parsed.from?.text,
-          to: parsed.to?.text,
-          date: parsed.date,
-          receivedDate: parsed.receivedDate,
-          text: parsed.text,
-          html: parsed.html,
-          attachments: parsed.attachments.map(attachment => ({
-            filename: attachment.filename,
-            contentType: attachment.contentType,
-            size: attachment.size
-          })),
-          flags: message.flags,
-          mailbox: mailboxPath // Add mailbox information
-        };
+        console.log(`Fetching emails with sequence numbers from ${start} to ${end}`);
         
-        emails.push(email);
-      } catch (parseError) {
-        console.error(`Error parsing email ${message.uid}:`, parseError);
-        // Continue with next email instead of failing the entire request
-        continue;
+        try {
+          // Use sequence numbers instead of search criteria
+          for await (const message of client.fetch({seq: `${start}:${end}`}, { envelope: true, source: true, flags: true })) {
+            count++;
+            console.log(`Processing email ${count} with UID: ${message.uid}`);
+            
+            try {
+              // Get email content using the same parsing logic as before
+              const parsed = await simpleParser(message.source);
+              
+              // Extract relevant information (same as before)
+              const email = {
+                id: message.uid,
+                messageId: parsed.messageId,
+                subject: parsed.subject,
+                from: parsed.from?.text,
+                to: parsed.to?.text,
+                date: parsed.date,
+                receivedDate: parsed.receivedDate,
+                text: parsed.text,
+                html: parsed.html,
+                attachments: parsed.attachments.map(attachment => ({
+                  filename: attachment.filename,
+                  contentType: attachment.contentType,
+                  size: attachment.size
+                })),
+                flags: message.flags,
+                mailbox: mailboxPath
+              };
+              
+              emails.push(email);
+            } catch (parseError) {
+              console.error(`Error parsing email ${message.uid}:`, parseError);
+              continue;
+            }
+          }
+          
+          console.log(`Gmail-specific approach fetch complete. Found ${emails.length} emails`);
+        } catch (gmailFetchError) {
+          console.error('Error during Gmail-specific fetch:', gmailFetchError);
+          // If we already have some emails from the first attempt, don't throw
+          if (emails.length === 0) {
+            throw gmailFetchError;
+          }
+        }
       }
     }
     
     console.log(`Fetch complete. Found ${emails.length} emails`);
     
+    // Clear the timeout as operation completed successfully
+    clearTimeout(operationTimeout);
+    
     return emails;
   } catch (error) {
     console.error('Error fetching emails:', error);
-    throw error;
+    
+    // Improve error handling with specific messages for common errors
+    if (error.code === 'ETIMEDOUT' || error.code === 'ESOCKET') {
+      throw new Error('Connection to email server timed out. Please try again later.');
+    } else if (error.code === 'ECONNRESET') {
+      throw new Error('Connection was reset by the email server. Please try again later.');
+    } else if (error.authenticationFailed) {
+      throw new Error('Authentication failed. Please check your credentials and try again.');
+    } else {
+      throw error;
+    }
   } finally {
     try {
-      // Close the mailbox and release resources
-      await client.mailboxClose();
-    } catch (error) {
-      console.error('Error closing mailbox:', error);
-    }
-    
-    try {
-      // Close the connection
-      await client.logout();
-    } catch (error) {
-      console.error('Error closing connection:', error);
+      // Safely close IMAP connection with proper error handling
+      // Use a small timeout to ensure we don't wait forever on logout operations
+      const safelyCloseConnection = async () => {
+        // First try to close the mailbox if it's open
+        try {
+          await Promise.race([
+            client.mailboxClose(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Mailbox close timeout')), 5000))
+          ]);
+        } catch (closeError) {
+          console.warn('Non-critical error closing mailbox:', closeError.message);
+          // Continue with logout even if mailbox close fails
+        }
+        
+        // Then try to logout gracefully
+        try {
+          await Promise.race([
+            client.logout(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Logout timeout')), 5000))
+          ]);
+        } catch (logoutError) {
+          console.warn('Non-critical error during logout:', logoutError.message);
+          // If logout fails, force close the connection
+          try {
+            client.close();
+          } catch (forceCloseError) {
+            console.warn('Failed to force close connection:', forceCloseError.message);
+          }
+        }
+      };
+      
+      // Execute the safe closing procedure
+      await safelyCloseConnection();
+    } catch (finalError) {
+      console.error('Error during connection cleanup:', finalError);
+      // We don't throw here as we're in finally block
     }
   }
 }
