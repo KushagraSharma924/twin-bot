@@ -253,6 +253,15 @@ export async function fetchEmails(credentials, options = {}) {
           // Get email content
           const parsed = await simpleParser(message.source);
           
+          // Debug message flags
+          console.log(`Email ${message.uid} flags:`, message.flags);
+          
+          // Check if message has the unseen flag
+          let hasUnseen = false;
+          if (Array.isArray(message.flags)) {
+            hasUnseen = !message.flags.includes('\\Seen');
+          }
+          
           // Extract relevant information
           const email = {
             id: message.uid,
@@ -269,9 +278,16 @@ export async function fetchEmails(credentials, options = {}) {
               contentType: attachment.contentType,
               size: attachment.size
             })),
-            flags: message.flags,
+            // Ensure flags is always an array and add \Unseen flag if the message is not seen
+            flags: Array.isArray(message.flags) ? message.flags : [],
+            // If message doesn't have \\Seen flag, add \\Unseen flag explicitly
             mailbox: mailboxPath // Add mailbox information
           };
+          
+          // If the message doesn't have a \Seen flag, explicitly add \Unseen
+          if (hasUnseen && !email.flags.includes('\\Unseen')) {
+            email.flags.push('\\Unseen');
+          }
           
           emails.push(email);
         } catch (parseError) {
@@ -315,6 +331,15 @@ export async function fetchEmails(credentials, options = {}) {
               // Get email content using the same parsing logic as before
               const parsed = await simpleParser(message.source);
               
+              // Debug message flags
+              console.log(`Email ${message.uid} flags:`, message.flags);
+              
+              // Check if message has the unseen flag
+              let hasUnseen = false;
+              if (Array.isArray(message.flags)) {
+                hasUnseen = !message.flags.includes('\\Seen');
+              }
+              
               // Extract relevant information (same as before)
               const email = {
                 id: message.uid,
@@ -331,9 +356,15 @@ export async function fetchEmails(credentials, options = {}) {
                   contentType: attachment.contentType,
                   size: attachment.size
                 })),
-                flags: message.flags,
+                // Ensure flags is always an array
+                flags: Array.isArray(message.flags) ? message.flags : [],
                 mailbox: mailboxPath
               };
+              
+              // If the message doesn't have a \Seen flag, explicitly add \Unseen
+              if (hasUnseen && !email.flags.includes('\\Unseen')) {
+                email.flags.push('\\Unseen');
+              }
               
               emails.push(email);
             } catch (parseError) {
@@ -420,27 +451,41 @@ export async function fetchEmails(credentials, options = {}) {
  * @returns {Promise<Array>} Array of mailbox objects
  */
 export async function listMailboxes(credentials) {
+  console.log('listMailboxes: Starting with credentials', {
+    host: credentials.host,
+    user: credentials.user,
+    useOAuth: !!credentials.oauth2,
+    hasPassword: !!credentials.password
+  });
+  
   const client = createImapClient(credentials);
   
   try {
+    console.log('listMailboxes: Connecting to IMAP server...');
     await client.connect();
+    console.log('listMailboxes: Connected successfully');
     
     const mailboxes = [];
     
-    for await (const mailbox of client.listMailboxes()) {
+    // Use client.list() instead of client.listMailboxes()
+    const mailboxList = await client.list();
+    
+    // Process each mailbox in the list
+    for (const mailbox of mailboxList) {
       mailboxes.push({
         name: mailbox.name,
         path: mailbox.path,
-        delimeter: mailbox.delimeter,
+        delimeter: mailbox.delimiter,
         specialUse: mailbox.specialUse
       });
       
+      // Process children if they exist
       if (mailbox.children) {
         for (const child of mailbox.children) {
           mailboxes.push({
             name: child.name,
             path: child.path,
-            delimeter: child.delimeter,
+            delimeter: child.delimiter,
             specialUse: child.specialUse,
             parent: mailbox.path
           });
@@ -448,9 +493,24 @@ export async function listMailboxes(credentials) {
       }
     }
     
+    console.log(`listMailboxes: Successfully retrieved ${mailboxes.length} mailboxes`);
     return mailboxes;
+  } catch (error) {
+    console.error('listMailboxes: Error details:', {
+      message: error.message,
+      code: error.code,
+      name: error.name,
+      stack: error.stack,
+      fullError: JSON.stringify(error)
+    });
+    throw error; // Re-throw the error to be handled by the caller
   } finally {
-    await client.logout();
+    try {
+      await client.logout();
+      console.log('listMailboxes: Successfully logged out');
+    } catch (logoutError) {
+      console.error('listMailboxes: Error during logout:', logoutError);
+    }
   }
 }
 

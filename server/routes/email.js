@@ -151,89 +151,50 @@ async function prepareEmailCredentials(userId, baseCredentials = {}) {
 }
 
 /**
- * Fetch emails from the user's mailbox
+ * Fetch emails from user's mailbox
  * POST /api/email/fetch
  */
 router.post('/fetch', async (req, res) => {
   try {
-    const { credentials: baseCredentials = {}, options, saveMetadata } = req.body;
+    const { credentials: baseCredentials = {}, mailbox = 'INBOX', limit = 20, unseen = false } = req.body;
     const userId = req.user.id;
+    
+    console.log(`Email fetch request for user ${userId}, mailbox: ${mailbox}, limit: ${limit}, unseen only: ${unseen}`);
+    
+    // Check for required fields
+    if (!baseCredentials) {
+      return res.status(400).json({ error: 'Email credentials are required' });
+    }
     
     // Prepare full credentials including OAuth if available
     const fullCredentials = await prepareEmailCredentials(userId, baseCredentials);
-    
-    // Set a response timeout to handle potential IMAP server lag
-    let timeoutId = setTimeout(() => {
-      console.error('API timeout: Email fetch taking too long');
-      if (!res.headersSent) {
-        res.status(504).json({ 
-          error: 'Request timed out',
-          message: 'The email server is taking too long to respond. Try again with a smaller limit or check your connection.'
-        });
-      }
-    }, 240000); // 4 minutes timeout
+    console.log('Credentials prepared successfully');
     
     // Fetch emails using the service
-    const emails = await emailService.fetchEmails(fullCredentials, options)
-      .catch(error => {
-        console.error('Email fetch error details:', {
-          message: error.message,
-          code: error.code,
-          name: error.name,
-          stack: error.stack
-        });
-        
-        clearTimeout(timeoutId);
-        
-        // Handle common IMAP/network errors
-        if (error.code === 'ECONNRESET' || error.code === 'ENOTFOUND' || error.code === 'ESOCKET' || 
-            error.message.includes('socket hang up') || error.message.includes('socket timeout')) {
-          throw {
-            status: 503,
-            message: 'Connection to email server failed. Please try again later.'
-          };
-        } else if (error.code === 'ETIMEDOUT' || error.message.includes('timeout')) {
-          throw {
-            status: 504,
-            message: 'Connection to email server timed out. Try with a smaller limit or check your network.'
-          };
-        } else if (error.authenticationFailed || error.message.includes('Invalid credentials')) {
-          throw {
-            status: 401,
-            message: 'Email authentication failed. Please check your credentials and try again.'
-          };
-        }
-        
-        throw error;
+    let emails = await emailService.fetchEmails(fullCredentials, { mailbox, limit, unseen });
+    console.log(`Fetched ${emails.length} emails from server`);
+    
+    // For debugging: log email structure
+    if (emails.length > 0) {
+      console.log('Example email structure:', {
+        id: emails[0].id,
+        subject: emails[0].subject,
+        hasFlags: !!emails[0].flags,
+        flagsIsArray: Array.isArray(emails[0].flags),
+        flagsLength: Array.isArray(emails[0].flags) ? emails[0].flags.length : 'n/a',
+        flagsContent: emails[0].flags
       });
-    
-    // Clear the timeout since we got a response
-    clearTimeout(timeoutId);
-    
-    // Save metadata if requested
-    if (saveMetadata && emails.length > 0) {
-      const emailMetadata = emails.map(email => ({
-        user_id: userId,
-        message_id: email.messageId,
-        subject: email.subject,
-        from: email.from,
-        received_date: email.receivedDate || email.date,
-        has_attachments: email.attachments && email.attachments.length > 0
-      }));
-      
-      // Upsert email metadata
-      const { error } = await supabase
-        .from('email_metadata')
-        .upsert(emailMetadata, { 
-          onConflict: 'message_id,user_id',
-          ignoreDuplicates: false
-        });
-        
-      if (error) {
-        console.error('Error saving email metadata:', error);
-      }
+    } else {
+      console.log('No emails fetched from mailbox');
     }
     
+    // Ensure that all emails have flags as an array
+    emails = emails.map(email => ({
+      ...email,
+      flags: Array.isArray(email.flags) ? email.flags : []
+    }));
+    
+    console.log(`Returning ${emails.length} emails to client`);
     res.json({ emails });
   } catch (error) {
     console.error('Error fetching emails:', error);
