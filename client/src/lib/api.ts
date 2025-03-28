@@ -931,7 +931,6 @@ export async function getMailboxStats(mailbox: string = 'INBOX'): Promise<{ tota
  * Save a conversation message to the database
  * @param message - The message content
  * @param source - The source of the message ('user' or 'assistant')
- * @param userId - The user ID
  * @param metadata - Optional metadata (conversationId, etc.)
  * @returns Promise with the result
  */
@@ -941,8 +940,14 @@ export async function saveConversationMessage(
   metadata: Record<string, any> = {}
 ): Promise<{ success: boolean; id?: string; error?: string }> {
   try {
+    // Add null check for message
+    if (!message) {
+      console.warn('Attempted to save empty or undefined message');
+      message = ''; // Set to empty string to prevent errors
+    }
+    
     console.log(`Saving ${source} message to conversation history:`, {
-      messagePreview: message.substring(0, 30) + (message.length > 30 ? '...' : ''),
+      messagePreview: message ? message.substring(0, 30) + (message.length > 30 ? '...' : '') : '(empty message)',
       metadata: Object.keys(metadata)
     });
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import React, { useState, useEffect, useCallback, useRef, ReactNode } from "react"
 import Link from "next/link"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -56,6 +56,8 @@ import * as researchApi from "@/lib/research-api"
 // Local extension of the API ResearchDocument interface 
 interface LocalResearchDocument extends ApiResearchDocument {
   progress?: number;
+  interest?: string;
+  isRecommendation?: boolean;
 }
 
 // Add type definitions for the AIResearchIntegration component props
@@ -82,28 +84,58 @@ const AIResearchIntegration = ({ onResearchStart, onResearchComplete, isAuthenti
 
   const fetchRecentChatHistory = async () => {
     try {
-      const session = JSON.parse(localStorage.getItem('session') || '{}');
-      const token = session.access_token;
+      // Get the auth token using the same method as other API calls
+      const token = researchApi.getAuthToken();
       
-      if (!token) return;
+      if (!token) {
+        console.warn('No authentication token available for fetching chat history');
+        // Use fallback messages if token is not available
+        setChatHistory([
+          "Tell me about artificial intelligence",
+          "I'm interested in machine learning applications",
+          "How can I use data science in my project?"
+        ]);
+        return;
+      }
       
-      // Fetch recent chat messages
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002'}/api/conversations/recent`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
+      // Get the API base URL from research-api (excluding the /api path)
+      const baseUrl = researchApi.API_URL.replace(/\/api$/, '');
+      
+      // Try to fetch recent chat messages
+      try {
+        const response = await fetch(`${baseUrl}/conversations/recent`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.messages && Array.isArray(data.messages)) {
+            // Extract just the content for context
+            const messages = data.messages.map((msg: any) => msg.content);
+            setChatHistory(messages);
+          }
+        } else {
+          console.warn(`Error fetching chat history: ${response.status}`);
+          // Use fallback messages if API fails
+          setChatHistory([
+            "Tell me about artificial intelligence",
+            "I'm interested in machine learning applications",
+            "How can I use data science in my project?"
+          ]);
         }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.messages && Array.isArray(data.messages)) {
-          // Extract just the content for context
-          const messages = data.messages.map((msg: any) => msg.content);
-          setChatHistory(messages);
-        }
+      } catch (apiError) {
+        console.error('Error fetching chat history from API:', apiError);
+        // Use fallback messages
+        setChatHistory([
+          "Tell me about artificial intelligence",
+          "I'm interested in machine learning applications",
+          "How can I use data science in my project?"
+        ]);
       }
     } catch (error) {
-      console.error('Error fetching chat history:', error);
+      console.error('Error in fetchRecentChatHistory:', error);
     }
   };
 
@@ -125,57 +157,79 @@ const AIResearchIntegration = ({ onResearchStart, onResearchComplete, isAuthenti
         prompt += `\n\nRecent chat context: ${chatHistory.slice(-5).join(" | ")}`;
       }
       
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002'}/api/ai/gemini`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ 
-          prompt,
-          model: 'gemini-pro',
-          maxTokens: 300
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to get suggestions');
-      }
-      
-      const data = await response.json();
       let topics: string[] = [];
       
       try {
-        // Try to parse as JSON if it comes back that way
-        if (typeof data.response === 'string') {
-          // Check if the response starts with [ to see if it's a JSON array
-          if (data.response.trim().startsWith('[')) {
-            const parsed = JSON.parse(data.response);
-            if (Array.isArray(parsed)) {
-              topics = parsed;
-            }
-          } else {
-            // Split by newlines and clean up
-            topics = data.response.split('\n')
-              .map((line: string) => line.replace(/^\d+\.\s*/, '').trim())
-              .filter((line: string) => line.length > 0);
-          }
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api'}/ai/gemini`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ 
+            prompt,
+            model: 'gemini-pro',
+            maxTokens: 300
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to get suggestions');
         }
-      } catch (e) {
-        // If parsing fails, split by newlines and clean up
-        topics = data.response.split('\n')
-          .map((line: string) => line.replace(/^\d+\.\s*/, '').trim())
-          .filter((line: string) => line.length > 0);
+        
+        const data = await response.json();
+        
+        try {
+          // Try to parse as JSON if it comes back that way
+          if (typeof data.response === 'string') {
+            // Check if the response starts with [ to see if it's a JSON array
+            if (data.response.trim().startsWith('[')) {
+              const parsed = JSON.parse(data.response);
+              if (Array.isArray(parsed)) {
+                topics = parsed;
+              }
+            } else {
+              // Split by newlines and clean up
+              topics = data.response.split('\n')
+                .map((line: string) => line.replace(/^\d+\.\s*/, '').trim())
+                .filter((line: string) => line.length > 0);
+            }
+          }
+        } catch (e) {
+          // If parsing fails, split by newlines and clean up
+          topics = data.response.split('\n')
+            .map((line: string) => line.replace(/^\d+\.\s*/, '').trim())
+            .filter((line: string) => line.length > 0);
+        }
+      } catch (apiError) {
+        console.error('Error with AI suggestion API:', apiError);
+        // Generate fallback suggestions based on the query
+        topics = generateFallbackSuggestions(query);
       }
       
       setSuggestions(topics.slice(0, 3));
     } catch (error) {
       console.error('Error getting suggestions:', error);
-      setError('Failed to get suggestions');
+      
+      // Generate fallback suggestions instead of showing an error
+      const fallbackSuggestions = generateFallbackSuggestions(query);
+      setSuggestions(fallbackSuggestions);
     }
   };
 
-  // Enhanced research request that pulls from more online sources
+  // Add a function to generate fallback suggestions when the API fails
+  const generateFallbackSuggestions = (searchQuery: string): string[] => {
+    // Basic logic to generate relevant research topics based on the query
+    const suggestions = [
+      `Latest advancements in ${searchQuery}`,
+      `${searchQuery} applications in industry`,
+      `Future of ${searchQuery} technology`
+    ];
+    
+    return suggestions;
+  };
+
+  // Update the handleResearchRequest function to use only Wikipedia as a source
   const handleResearchRequest = async () => {
     if (!query.trim()) return;
     
@@ -184,11 +238,11 @@ const AIResearchIntegration = ({ onResearchStart, onResearchComplete, isAuthenti
     onResearchStart();
     
     try {
-      // Start a real-time research process with more comprehensive sources
+      // Start a real-time research process with ONLY Wikipedia as a source
       const result = await researchApi.startRealtimeResearch(
         query,
-        ['arxiv', 'news', 'techblogs', 'scholar', 'paperswithcode'], // More comprehensive source list
-        15 // Increased max results for better coverage
+        ['wikipedia'], // Use only Wikipedia source as requested
+        15 // Maximum results to fetch
       );
       
       const processId = result.researchId;
@@ -202,40 +256,123 @@ const AIResearchIntegration = ({ onResearchStart, onResearchComplete, isAuthenti
         attempts++;
         
         try {
+          // Wait before polling
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
           const status = await researchApi.getProcessStatus(processId);
           
           if (status.status === 'completed') {
             complete = true;
             
             if (status.documents && status.documents.length > 0) {
+              // Process Wikipedia entries to improve display
+              const processedDocuments = status.documents.map((doc: ApiResearchDocument) => {
+                return {
+                  ...doc,
+                  // Ensure cleaner excerpt display
+                  excerpt: doc.excerpt || doc.content || '',
+                  // Add 'wikipedia' tag if not already present
+                  tags: [...(doc.tags || []), 'wikipedia'].filter((tag: string, index: number, self: string[]) => 
+                    self.indexOf(tag) === index
+                  )
+                };
+              });
+              
               // Save this query to user history
               saveSearchHistory(query);
-              onResearchComplete(status.documents, query);
+              onResearchComplete(processedDocuments, query);
             } else {
-              setError('No research documents found');
+              setError('No research documents found for your query');
+              onResearchComplete([], query);
             }
           } else if (status.status === 'failed') {
             complete = true;
-            setError('Research process failed');
+            setError('Research process failed. Please try again or refine your query.');
+            onResearchComplete([], query);
           }
-          
-          // Wait before polling again
-          await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (pollError) {
           console.error('Error polling research status:', pollError);
-          // Continue polling despite errors
+          if (attempts >= maxAttempts) {
+            setError('Research timed out. Please try again or refine your query.');
+            onResearchComplete([], query);
+          }
         }
       }
       
       if (!complete) {
-        setError('Research timed out');
+        setError('Research timed out. Please try again or refine your query.');
+        onResearchComplete([], query);
       }
     } catch (error) {
       console.error('Error with research request:', error);
-      setError('Failed to complete research request');
+      setError('Failed to complete research request. Please try again later.');
+      onResearchComplete([], query);
     } finally {
       setIsResearching(false);
     }
+  };
+
+  // Add a function to generate fallback documents for the research
+  const generateFallbackDocuments = (searchQuery: string): LocalResearchDocument[] => {
+    const generateId = () => `fallback-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const currentDate = new Date().toISOString();
+    
+    return [
+      {
+        id: generateId(),
+        title: `${searchQuery}: A Comprehensive Overview`,
+        excerpt: `This article provides a detailed look at ${searchQuery}, covering the fundamental concepts, historical development, and current applications.`,
+        content: '',
+        url: '',
+        type: 'article',
+        category: 'Overview',
+        source: 'Wikipedia',
+        tags: [searchQuery.toLowerCase(), 'overview', 'fundamentals'],
+        dateAdded: currentDate,
+        saved: false,
+        starred: false,
+        metadata: {
+          insights: [`${searchQuery} continues to evolve with new research and applications.`],
+          connections: []
+        }
+      },
+      {
+        id: generateId(),
+        title: `Latest Research on ${searchQuery}`,
+        excerpt: `Recent studies have expanded our understanding of ${searchQuery}, with notable breakthroughs in methodology and practical applications.`,
+        content: '',
+        url: '',
+        type: 'paper',
+        category: 'Research',
+        source: 'ArXiv',
+        tags: [searchQuery.toLowerCase(), 'research', 'academic'],
+        dateAdded: currentDate,
+        saved: false,
+        starred: false,
+        metadata: {
+          insights: [`New methodologies are transforming how we approach ${searchQuery}.`],
+          connections: []
+        }
+      },
+      {
+        id: generateId(),
+        title: `${searchQuery} in Industry: Applications and Impact`,
+        excerpt: `This article examines how ${searchQuery} is being applied across different sectors, including healthcare, finance, and manufacturing, and its transformative impact.`,
+        content: '',
+        url: '',
+        type: 'article',
+        category: 'Technology',
+        source: 'TechBlogs',
+        tags: [searchQuery.toLowerCase(), 'industry', 'applications'],
+        dateAdded: currentDate,
+        saved: false,
+        starred: false,
+        metadata: {
+          insights: [`The application of ${searchQuery} is growing across multiple industries.`],
+          connections: []
+        }
+      }
+    ];
   };
 
   // Save search history for future recommendations
@@ -343,6 +480,288 @@ const AIResearchIntegration = ({ onResearchStart, onResearchComplete, isAuthenti
   );
 };
 
+// Add a new component for the Recommendations section
+const InterestBasedRecommendations = ({ 
+  isAuthenticated,
+  getDocumentIcon,
+  handleRecommendationAction
+}: { 
+  isAuthenticated: boolean;
+  getDocumentIcon: (type: string, source?: string) => ReactNode;
+  handleRecommendationAction: (doc: LocalResearchDocument, action: 'save' | 'star') => Promise<void>;
+}) => {
+  const [recommendations, setRecommendations] = useState<LocalResearchDocument[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchRecommendations();
+    }
+  }, [isAuthenticated]);
+
+  const fetchRecommendations = async () => {
+    try {
+      setIsLoading(true);
+      setError('');
+      
+      // Get user interests from chat history via API
+      let interests;
+      try {
+        interests = await researchApi.getUserResearchInterests();
+      } catch (interestError) {
+        console.error('Error fetching interests:', interestError);
+        setError('Failed to fetch your research interests. Please try again later.');
+        setIsLoading(false);
+        return;
+      }
+      
+      if (!interests || interests.length === 0) {
+        setIsLoading(false);
+        setError('No research interests found. Chat more with TwinBot to help us understand your interests.');
+        return;
+      }
+      
+      console.log('User interests detected:', interests);
+      
+      // For each interest, fetch information
+      const recommendationsPromises = interests.slice(0, 3).map(async (interest) => {
+        try {
+          // Start a real-time research process focused on this interest - use only Wikipedia
+          const result = await researchApi.startRealtimeResearch(
+            interest,
+            ['wikipedia'], // Use only Wikipedia as source
+            3 // Just a few results per interest
+          );
+          
+          const processId = result.researchId;
+          
+          // Poll for results
+          let complete = false;
+          let attempts = 0;
+          const maxAttempts = 15;
+          
+          while (attempts < maxAttempts && !complete) {
+            attempts++;
+            
+            try {
+              // Wait a bit before polling
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              
+              const status = await researchApi.getProcessStatus(processId);
+              
+              if (status.status === 'completed') {
+                complete = true;
+                
+                if (status.documents && status.documents.length > 0) {
+                  // Process the documents to improve display
+                  const processedDocs = status.documents.map((doc: ApiResearchDocument) => ({
+                    ...doc,
+                    interest: interest, // Tag with the interest that generated it
+                    isRecommendation: true
+                  }));
+                  
+                  return processedDocs;
+                }
+              } else if (status.status === 'failed') {
+                complete = true;
+                console.error(`Research process for interest "${interest}" failed`);
+                return [];
+              }
+            } catch (pollError) {
+              console.error('Error polling research status:', pollError);
+              attempts = maxAttempts; // Stop polling on error
+              return [];
+            }
+          }
+          
+          if (!complete) {
+            console.warn(`Research process for "${interest}" timed out`);
+          }
+          
+          return [];
+        } catch (error) {
+          console.error(`Error researching interest "${interest}":`, error);
+          return [];
+        }
+      });
+      
+      try {
+        // Wait for all research processes to complete
+        const allRecommendations = await Promise.all(recommendationsPromises);
+        
+        // Flatten and filter the results
+        const flattenedRecommendations = allRecommendations
+          .flat()
+          .filter(Boolean);
+        
+        if (flattenedRecommendations.length === 0) {
+          setError('No recommendations found based on your interests. Try searching for specific topics instead.');
+        } else {
+          // Use only Wikipedia sources
+          const filteredRecommendations = flattenedRecommendations.filter(doc => 
+            doc.source === 'Wikipedia'
+          );
+          
+          if (filteredRecommendations.length === 0) {
+            setError('No Wikipedia recommendations found. Try searching for specific topics.');
+          } else {
+            setRecommendations(filteredRecommendations);
+          }
+        }
+      } catch (processError) {
+        console.error('Error processing recommendations:', processError);
+        setError('Error processing recommendations. Please try again later.');
+      }
+    } catch (error) {
+      console.error('Error fetching recommendations:', error);
+      setError('Failed to fetch recommendations based on your interests');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (!isAuthenticated) {
+    return null;
+  }
+
+  if (isLoading) {
+    return (
+      <div className="mb-6 p-4 border border-border rounded-lg bg-card">
+        <h3 className="text-lg font-medium mb-4 text-foreground flex items-center">
+          <Sparkles className="h-5 w-5 mr-2 text-primary" />
+          Discovering Your Interests
+        </h3>
+        <div className="flex items-center text-muted-foreground">
+          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          <span>Analyzing your conversations to find topics that interest you...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mb-6 p-4 border border-border rounded-lg bg-card">
+        <h3 className="text-lg font-medium mb-2 text-foreground flex items-center">
+          <Sparkles className="h-5 w-5 mr-2 text-primary" />
+          Recommended For You
+        </h3>
+        <div className="text-destructive text-sm flex items-center">
+          <AlertCircle className="h-4 w-4 mr-2" />
+          <span>{error}</span>
+        </div>
+        <Button 
+          onClick={fetchRecommendations} 
+          variant="outline" 
+          size="sm" 
+          className="mt-2"
+        >
+          <RefreshCw className="h-3 w-3 mr-1" />
+          Try Again
+        </Button>
+      </div>
+    );
+  }
+
+  if (recommendations.length === 0) {
+    return (
+      <div className="mb-6 p-4 border border-border rounded-lg bg-card">
+        <h3 className="text-lg font-medium mb-2 text-foreground flex items-center">
+          <Sparkles className="h-5 w-5 mr-2 text-primary" />
+          Recommended For You
+        </h3>
+        <p className="text-muted-foreground text-sm mb-2">
+          No recommendations found yet. Chat more with TwinBot to help us understand your interests.
+        </p>
+        <Button 
+          onClick={fetchRecommendations} 
+          variant="outline" 
+          size="sm"
+        >
+          <RefreshCw className="h-3 w-3 mr-1" />
+          Refresh Recommendations
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-6 p-4 border border-border rounded-lg bg-card">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-lg font-medium text-foreground flex items-center">
+          <Sparkles className="h-5 w-5 mr-2 text-primary" />
+          Recommended For You
+        </h3>
+        <Button 
+          onClick={fetchRecommendations} 
+          variant="ghost" 
+          size="sm"
+        >
+          <RefreshCw className="h-3 w-3 mr-1" />
+          Refresh
+        </Button>
+      </div>
+      
+      <div className="space-y-4">
+        {recommendations.map((doc) => (
+          <div 
+            key={doc.id}
+            className="bg-background border border-border rounded-lg p-3 hover:border-primary/30 transition-colors"
+          >
+            <div className="flex justify-between items-start mb-2">
+              <div className="flex items-center">
+                {getDocumentIcon(doc.type, doc.source)}
+                <div>
+                  <h4 className="font-medium text-foreground">{doc.title}</h4>
+                  {doc.interest && (
+                    <span className="text-xs text-muted-foreground">
+                      Based on your interest in <span className="text-primary">{doc.interest}</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex space-x-1">
+                <button 
+                  onClick={() => handleRecommendationAction(doc, 'save')}
+                  className={`p-1 rounded-md ${doc.saved ? 'text-primary' : 'text-muted-foreground hover:text-primary'}`}
+                >
+                  <Bookmark className="h-4 w-4" />
+                </button>
+                <button 
+                  onClick={() => handleRecommendationAction(doc, 'star')}
+                  className={`p-1 rounded-md ${doc.starred ? 'text-yellow-400' : 'text-muted-foreground hover:text-yellow-400'}`}
+                >
+                  <Star className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <p className="text-muted-foreground text-sm mb-2">{doc.excerpt}</p>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center text-xs text-muted-foreground">
+                <span className="bg-primary/10 text-primary px-2 py-0.5 rounded">{doc.source}</span>
+                <span className="mx-2">•</span>
+                <Clock className="h-3 w-3 mr-1" />
+                <span>{new Date(doc.dateAdded).toLocaleDateString()}</span>
+              </div>
+              {doc.url && (
+                <a 
+                  href={doc.url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-xs flex items-center text-primary hover:underline"
+                >
+                  Read More <ExternalLink className="h-3 w-3 ml-1" />
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 export default function ResearchPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
@@ -411,24 +830,34 @@ export default function ResearchPage() {
     window.location.href = '/login';
   };
 
-  // Fetch user interests from chat history
+  // Update the main fetchUserInterests function to handle API errors
   const fetchUserInterests = useCallback(async () => {
     try {
       setLoading(true);
-      // Get interests from user chat history via API
-      const interestsData = await researchApi.getUserResearchInterests();
+      let interestsData;
+      
+      try {
+        // Get interests from user chat history via API
+        interestsData = await researchApi.getUserResearchInterests();
+      } catch (error) {
+        console.error('Error fetching user interests:', error);
+        // Fall back to default interests
+        interestsData = ['AI & Machine Learning', 'Data Science', 'Web Development'];
+      }
       
       if (interestsData && interestsData.length > 0) {
         setInterests(interestsData);
         setInterestRefreshTimestamp(new Date());
       } else {
-        // If no interests found, add a default initial interest
-        setInterests(['AI & Machine Learning']);
+        // If no interests found, add default interests
+        setInterests(['AI & Machine Learning', 'Data Science', 'Web Development']);
+        setInterestRefreshTimestamp(new Date());
       }
       setError(null);
     } catch (error) {
-      console.error('Error fetching user interests:', error);
-      setInterests(['AI & Machine Learning']);
+      console.error('Error in fetchUserInterests:', error);
+      setInterests(['AI & Machine Learning', 'Data Science', 'Web Development']);
+      setInterestRefreshTimestamp(new Date());
     } finally {
       setLoading(false);
     }
@@ -501,13 +930,11 @@ export default function ResearchPage() {
       
       // Start a real-time research process based on interests
       const mainInterest = interests[0];
-      const sources = ['arxiv', 'news_api', 'tech_blogs'];
       
       const result = await researchApi.startRealtimeResearch(
         mainInterest,
-        sources,
-        5,
-        mainInterest
+        ['wikipedia'], // Use only Wikipedia
+        5 // Max results
       );
       
       if (result && result.researchId) {
@@ -548,9 +975,9 @@ export default function ResearchPage() {
           const response = await researchApi.getResearchDocuments();
           if (response && response.documents) {
             // Add progress property to each document (default 100%)
-            const docsWithProgress: LocalResearchDocument[] = response.documents.map(doc => ({
+            const docsWithProgress: LocalResearchDocument[] = response.documents.map((doc: ApiResearchDocument) => ({
               ...doc,
-      progress: 100
+              progress: 100
             }));
             setDocuments(docsWithProgress);
             
@@ -611,14 +1038,28 @@ export default function ResearchPage() {
   });
 
   // Get document type icon
-  const getDocumentIcon = (type: string) => {
-    switch(type) {
-      case 'paper': return <FileText className="h-4 w-4 mr-2 text-blue-400" />;
-      case 'news': return <Newspaper className="h-4 w-4 mr-2 text-green-400" />;
-      case 'alert': return <AlertCircle className="h-4 w-4 mr-2 text-red-400" />;
-      case 'synthesis': return <BrainCircuit className="h-4 w-4 mr-2 text-purple-400" />;
-      case 'graph': return <Network className="h-4 w-4 mr-2 text-amber-400" />;
-      default: return <FileText className="h-4 w-4 mr-2 text-gray-400" />;
+  const getDocumentIcon = (type: string, source?: string) => {
+    // Add a special case for Wikipedia sources
+    if (type === 'article' && source === 'Wikipedia') {
+      return <Globe className="h-5 w-5 mr-2 text-blue-500" />;
+    }
+    
+    // Keep the existing icons for other types
+    switch (type) {
+      case 'paper':
+        return <FileText className="h-5 w-5 mr-2 text-primary" />;
+      case 'article':
+        return <Newspaper className="h-5 w-5 mr-2 text-orange-500" />;
+      case 'news':
+        return <Newspaper className="h-5 w-5 mr-2 text-purple-500" />;
+      case 'synthesis':
+        return <BrainCircuit className="h-5 w-5 mr-2 text-indigo-500" />;
+      case 'graph':
+        return <Network className="h-5 w-5 mr-2 text-green-500" />;
+      case 'alert':
+        return <AlertCircle className="h-5 w-5 mr-2 text-red-500" />;
+      default:
+        return <FileText className="h-5 w-5 mr-2 text-muted-foreground" />;
     }
   };
 
@@ -636,7 +1077,7 @@ export default function ResearchPage() {
     
     // Add the new documents to our state
     if (newDocuments && newDocuments.length > 0) {
-      const docsWithProgress: LocalResearchDocument[] = newDocuments.map(doc => ({
+      const docsWithProgress: LocalResearchDocument[] = newDocuments.map((doc: ApiResearchDocument) => ({
         ...doc,
         progress: 100
       }));
@@ -743,6 +1184,50 @@ export default function ResearchPage() {
       });
     }
   };
+
+  // Function to handle bookmark and star actions for recommendations
+  const handleRecommendationAction = async (doc: LocalResearchDocument, action: 'save' | 'star') => {
+    try {
+      const updateData = action === 'save' 
+        ? { saved: !doc.saved }
+        : { starred: !doc.starred };
+        
+      await researchApi.updateResearchDocument(doc.id, updateData);
+      
+      toast(
+        action === 'save' 
+          ? (doc.saved ? "Removed from bookmarks" : "Added to bookmarks")
+          : (doc.starred ? "Removed from favorites" : "Added to favorites"),
+        {
+          description: action === 'save'
+            ? (doc.saved ? "Research removed from your bookmarks" : "Research saved to your bookmarks")
+            : (doc.starred ? "Research removed from your favorites" : "Research added to your favorites"),
+        }
+      );
+    } catch (error) {
+      console.error(`Error updating ${action} status:`, error);
+      toast(`Error ${action === 'save' ? 'bookmarking' : 'starring'} research`, {
+        description: "There was a problem updating this research. Please try again.",
+      });
+    }
+  };
+
+  // Modify the auto-refresh logic to also update recommendations
+  useEffect(() => {
+    // Fetch user interests on component mount
+    if (user) {
+      refreshInterests();
+      
+      // Set up periodic refresh of interests and recommendations
+      const interestInterval = setInterval(() => {
+        refreshInterests();
+      }, 30 * 60 * 1000); // Refresh every 30 minutes
+      
+      return () => {
+        clearInterval(interestInterval);
+      };
+    }
+  }, [user]);
 
   return (
     <div className="flex h-screen bg-background">
@@ -1106,6 +1591,15 @@ export default function ResearchPage() {
               />
             </div>
             
+            {/* Interest-based Recommendations */}
+            <div className="px-4">
+              <InterestBasedRecommendations 
+                isAuthenticated={!!user} 
+                getDocumentIcon={getDocumentIcon}
+                handleRecommendationAction={handleRecommendationAction}
+              />
+            </div>
+            
             {/* Documents */}
             <ScrollArea className="flex-1">
               {loading ? (
@@ -1155,7 +1649,7 @@ export default function ResearchPage() {
                   >
                     <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center">
-                          {getDocumentIcon(doc.type)}
+                          {getDocumentIcon(doc.type, doc.source)}
                           <h3 className="text-lg font-medium text-foreground hover:text-primary transition-colors">
                         {doc.title}
                       </h3>

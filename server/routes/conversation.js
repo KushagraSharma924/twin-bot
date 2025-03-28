@@ -1,5 +1,6 @@
 import express from 'express';
 import * as supabaseService from '../services/supabaseService.js';
+import { supabase } from '../config/index.js';
 
 const router = express.Router();
 
@@ -143,6 +144,66 @@ router.get('/history', async (req, res) => {
       success: false,
       message: error.message || 'Server error',
       code: 'SERVER_ERROR'
+    });
+  }
+});
+
+/**
+ * Delete a conversation
+ * POST /api/conversations/delete
+ */
+router.post('/delete', async (req, res) => {
+  try {
+    const { conversationId } = req.body;
+    const userId = req.user?.id;
+    
+    // Log the request details
+    console.log('Conversation delete request:', {
+      conversationId,
+      userId,
+      authorization: req.headers.authorization ? 
+        `${req.headers.authorization.substring(0, 15)}...` : 'none'
+    });
+    
+    // Validate required fields
+    if (!conversationId) {
+      console.warn('Missing required field: conversationId');
+      return res.status(400).json({ error: 'Conversation ID is required' });
+    }
+    
+    if (!userId) {
+      console.warn('Missing required field: userId (from authentication)');
+      return res.status(401).json({ error: 'User ID is required, please authenticate' });
+    }
+    
+    // Delete all messages with this conversation_id for this user
+    console.log(`Deleting conversation ${conversationId} for user ${userId}`);
+    
+    const { error } = await supabase
+      .from('conversations')
+      .delete()
+      .eq('conversation_id', conversationId)
+      .eq('user_id', userId);
+    
+    if (error) {
+      console.error('Error deleting conversation from database:', error);
+      return res.status(500).json({ 
+        success: false,
+        error: error.message || 'Failed to delete conversation'
+      });
+    }
+    
+    // Success
+    console.log(`Conversation ${conversationId} deleted successfully`);
+    return res.status(200).json({
+      success: true,
+      message: 'Conversation deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error in /api/conversations/delete endpoint:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: error.message || 'Internal server error'
     });
   }
 });

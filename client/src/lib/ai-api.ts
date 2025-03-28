@@ -4,9 +4,10 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002';
  * Send a message to the AI assistant
  * @param message - The user's message
  * @param userId - The user's ID
+ * @param conversationId - Optional conversation ID to maintain context
  * @returns The AI's response
  */
-export async function sendMessage(message: string, userId: string): Promise<string> {
+export async function sendMessage(message: string, userId: string, conversationId?: string): Promise<string> {
   try {
     const session = JSON.parse(localStorage.getItem('session') || '{}');
     const token = session.access_token;
@@ -17,6 +18,9 @@ export async function sendMessage(message: string, userId: string): Promise<stri
     
     // For debugging
     console.log(`Sending message to ${API_URL}/api/twin/chat with token length: ${token.length}`);
+    if (conversationId) {
+      console.log(`Using conversation ID: ${conversationId} for context`);
+    }
     
     const response = await fetch(`${API_URL}/api/twin/chat`, {
       method: 'POST',
@@ -24,7 +28,11 @@ export async function sendMessage(message: string, userId: string): Promise<stri
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify({ message, userId })
+      body: JSON.stringify({ 
+        message, 
+        userId,
+        conversationId 
+      })
     });
     
     // Debugging response details
@@ -57,7 +65,11 @@ export async function sendMessage(message: string, userId: string): Promise<stri
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${newToken}`
           },
-          body: JSON.stringify({ message, userId })
+          body: JSON.stringify({ 
+            message, 
+            userId,
+            conversationId 
+          })
         });
         
         if (!retryResponse.ok) {

@@ -1,6 +1,8 @@
 import express from 'express';
 import * as aiService from '../services/aiService.js';
 import * as calendarService from '../services/calendarService.js';
+import * as supabaseService from '../services/supabaseService.js';
+import * as embeddingService from '../services/embeddingService.js';
 
 const router = express.Router();
 
@@ -73,7 +75,7 @@ router.post('/embed', async (req, res) => {
  */
 router.post('/twin/chat', async (req, res) => {
   try {
-    const { message, userId } = req.body;
+    const { message, userId, conversationId } = req.body;
     const accessToken = req.headers['authorization']?.split(' ')[1]; // Get auth token
     
     if (!message) {
@@ -133,8 +135,52 @@ router.post('/twin/chat', async (req, res) => {
       }
     }
     
+    // Fetch chat history from Supabase for context
+    let chatHistory = [];
+    try {
+      // Import supabaseService here to avoid circular dependencies
+      const { supabase } = await import('../config/index.js');
+      
+      // Get the conversation history limit from config or use default of 10 messages
+      const historyLimit = process.env.CHAT_HISTORY_LIMIT || 10;
+      
+      // Query to get recent messages for this conversation
+      const query = supabase
+        .from('conversations')
+        .select('*')
+        .eq('user_id', userId);
+      
+      // Add conversation filter if provided
+      if (conversationId) {
+        query.eq('conversation_id', conversationId);
+      }
+      
+      // Execute the query with limits and ordering
+      const { data, error } = await query
+        .order('timestamp', { ascending: false })
+        .limit(parseInt(historyLimit));
+        
+      if (error) {
+        console.error('Error fetching chat history:', error);
+      } else if (data && data.length > 0) {
+        console.log(`Successfully fetched ${data.length} previous messages for context`);
+        
+        // Format the messages for Gemini
+        chatHistory = data
+          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+          .map(msg => ({
+            role: msg.source === 'user' ? 'user' : 'assistant',
+            content: msg.message
+          }));
+      }
+    } catch (historyError) {
+      console.error('Error getting chat history:', historyError);
+      // Continue without history if there's an error
+    }
+    
     // Process the message using the AI service (normal chat flow)
-    const response = await aiService.processNLPTask(message);
+    // Pass the chat history to the processNLPTask function
+    const response = await aiService.processNLPTask(message, 'general', chatHistory);
     
     res.json({ response });
   } catch (error) {
@@ -360,5 +406,78 @@ router.post('/twin/simple-calendar-event', async (req, res) => {
     });
   }
 });
+
+// Extract user interests from the current message
+let newInterests = [];
+try {
+  newInterests = await aiService.extractUserInterests(message);
+  console.log('Extracted interests from message:', newInterests);
+} catch (interestsError) {
+  console.error('Error extracting interests:', interestsError);
+  // Continue without extracted interests
+}
+
+// Get existing user interests from Supabase
+let userInterests = [];
+try {
+  const interestsResult = await supabaseService.default.userInterests.getInterests(userId);
+  if (interestsResult.success && interestsResult.interests) {
+    userInterests = interestsResult.interests;
+    console.log('Retrieved existing user interests:', userInterests);
+  }
+} catch (getInterestsError) {
+  console.error('Error getting user interests:', getInterestsError);
+  // Continue with empty interests
+}
+
+// Combine existing and new interests, removing duplicates
+if (newInterests.length > 0) {
+  try {
+    // Create a Set to remove duplicates (case insensitive)
+    const interestsSet = new Set([
+      ...userInterests.map(i => i.toLowerCase()),
+      ...newInterests.map(i => i.toLowerCase())
+    ]);
+    
+    // Convert back to array and limit to 20 most recent interests
+    const combinedInterests = Array.from(interestsSet).slice(0, 20);
+    
+    // Only update if we have new interests
+    if (combinedInterests.length > userInterests.length) {
+      console.log('Updating user interests with new combination:', combinedInterests);
+      
+      try {
+        // Generate embedding for interests
+        const embedding = await embeddingService.default.getInterestsEmbedding(combinedInterests);
+        
+        // Store updated interests and embedding
+        if (embedding) {
+          await supabaseService.default.userInterests.storeInterests(userId, combinedInterests, embedding);
+        } else {
+          // If embedding fails, still store the interests without embedding
+          await supabaseService.default.userInterests.storeInterests(userId, combinedInterests, null);
+          console.warn('Stored interests without embedding due to embedding generation failure');
+        }
+        
+        // Update the userInterests array for this request
+        userInterests = combinedInterests;
+      } catch (embeddingError) {
+        console.error('Error with embedding generation or storage:', embeddingError);
+        // Store interests without embedding as fallback
+        try {
+          await supabaseService.default.userInterests.storeInterests(userId, combinedInterests, null);
+          console.warn('Stored interests without embedding after embedding error');
+          userInterests = combinedInterests;
+        } catch (fallbackError) {
+          console.error('Fallback interest storage also failed:', fallbackError);
+          // Keep using existing interests
+        }
+      }
+    }
+  } catch (updateInterestsError) {
+    console.error('Error updating user interests:', updateInterestsError);
+    // Continue with existing interests
+  }
+}
 
 export default router; 

@@ -61,4 +61,58 @@ export const oauth2Client = new google.auth.OAuth2(
   config.google.clientId,
   config.google.clientSecret,
   config.google.redirectUri
-); 
+);
+
+/**
+ * Initialize pgvector extension if needed
+ */
+export async function initPgVector() {
+  try {
+    console.log('Checking pgvector extension status...');
+    
+    // Check if pgvector extension exists
+    const { data, error } = await supabase.from('pg_extension')
+      .select('extname')
+      .eq('extname', 'vector')
+      .maybeSingle();
+    
+    if (error) {
+      // If error, it's likely the pg_extension view doesn't exist or isn't accessible
+      console.warn('Could not check pgvector extension status:', error.message);
+      return { success: false, message: 'Could not check pgvector status', error };
+    }
+    
+    if (data) {
+      console.log('pgvector extension is already installed');
+      return { success: true, exists: true };
+    }
+    
+    // Try to create the extension
+    console.log('Attempting to enable pgvector extension...');
+    
+    const { error: createError } = await supabase.rpc('exec_sql', {
+      sql: 'CREATE EXTENSION IF NOT EXISTS vector;'
+    });
+    
+    if (createError) {
+      console.error('Failed to enable pgvector extension:', createError);
+      return { 
+        success: false, 
+        message: 'Failed to enable pgvector extension', 
+        error: createError 
+      };
+    }
+    
+    console.log('Successfully enabled pgvector extension');
+    return { success: true, enabled: true };
+  } catch (error) {
+    console.error('Error initializing pgvector:', error);
+    return { success: false, message: 'Error initializing pgvector', error };
+  }
+}
+
+// Export all config
+export default {
+  supabase,
+  initPgVector
+}; 

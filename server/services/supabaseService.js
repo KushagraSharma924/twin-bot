@@ -638,6 +638,111 @@ export const learningData = {
   }
 };
 
+/**
+ * User interests management
+ */
+export const userInterests = {
+  /**
+   * Store user interests
+   * @param {string} userId - User ID
+   * @param {Array} interests - Array of interest strings
+   * @param {Array} embedding - Optional embedding for interests
+   */
+  async storeInterests(userId, interests, embedding) {
+    try {
+      if (!userId || !interests || !Array.isArray(interests) || interests.length === 0) {
+        console.error('Invalid parameters for storing user interests');
+        return { success: false, error: 'Invalid parameters' };
+      }
+      
+      console.log(`Storing ${interests.length} interests for user ${userId}`);
+      
+      // Check for Supabase client
+      if (!supabase) {
+        console.error('Error: Supabase client is not initialized');
+        return { success: false, error: 'Database client not initialized' };
+      }
+      
+      // First, check if table exists, if not create it
+      try {
+        // We'll try an operation that would fail if the table doesn't exist
+        const { count, error } = await supabase
+          .from('user_interests')
+          .select('*', { count: 'exact', head: true })
+          .limit(1);
+          
+        if (error && (error.code === '42P01' || error.message.includes('relation "user_interests" does not exist'))) {
+          // Table doesn't exist, create it
+          console.log('Creating user_interests table...');
+          await this._createInterestsTable();
+        }
+      } catch (tableError) {
+        console.error('Error checking for user_interests table:', tableError);
+        // Try to create the table anyway
+        await this._createInterestsTable();
+      }
+      
+      // Create payload - without embedding if not provided
+      const payload = {
+        user_id: userId,
+        interests: interests,
+        last_updated: new Date().toISOString()
+      };
+      
+      // Only include embedding if it's provided
+      if (embedding && Array.isArray(embedding)) {
+        payload.embedding = embedding;
+      }
+      
+      // First, try to update existing record
+      const { data: updateData, error: updateError } = await supabase
+        .from('user_interests')
+        .update(payload)
+        .eq('user_id', userId)
+        .select('*');
+      
+      // If update failed (no record exists), insert new record
+      if (updateError || !updateData || updateData.length === 0) {
+        console.log('No existing record found, inserting new interests');
+        const { data: insertData, error: insertError } = await supabase
+          .from('user_interests')
+          .insert(payload)
+          .select('*');
+          
+        if (insertError) {
+          console.error('Failed to insert user interests:', insertError);
+          return { success: false, error: insertError.message };
+        }
+        
+        console.log('Successfully inserted user interests');
+        return { success: true, data: insertData };
+      }
+      
+      console.log('Successfully updated user interests');
+      return { success: true, data: updateData };
+    } catch (error) {
+      console.error('Error storing user interests:', error);
+      return { success: false, error: error.message };
+    }
+  },
+  
+  /**
+   * Create user interests table
+   */
+  async _createInterestsTable() {
+    const { data, error } = await supabase
+      .from('user_interests')
+      .insert([{
+        user_id: '',
+        interests: [],
+        last_updated: new Date().toISOString()
+      }]);
+    
+    if (error) throw error;
+    return data;
+  }
+};
+
 export default {
   auth,
   profiles,
@@ -646,5 +751,6 @@ export default {
   calendarEvents,
   browserInsights,
   preferences,
-  learningData
+  learningData,
+  userInterests
 }; 

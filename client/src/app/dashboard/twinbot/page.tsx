@@ -344,11 +344,12 @@ export default function TwinBotChatPage() {
   // Simulate typing effect
   const simulateTyping = (fullResponse: string, messageId: string) => {
     let currentIndex = 0;
-    const typingInterval = 0.3; // Speed of typing (3x faster)
-    const charsPerUpdate = 3; // Type multiple characters at once for faster display
+    const typingInterval = 0.1; // Speed of typing (3x faster - changed from 0.3)
+    const charsPerUpdate = 9; // Type multiple characters at once for faster display (3x more characters)
     
     const typeNextChar = () => {
-      if (currentIndex <= fullResponse.length) {
+      // Add null check for fullResponse
+      if (fullResponse && currentIndex <= fullResponse.length) {
         setMessages(prevMessages => {
           return prevMessages.map(msg => {
             if (msg.id === messageId) {
@@ -495,70 +496,102 @@ export default function TwinBotChatPage() {
         )
       );
       
-      // Start a real-time research process
-      const sources = ['arxiv', 'news_api', 'tech_blogs'];
-      const result = await researchApi.startRealtimeResearch(
-        topic,
-        sources,
-        3, // Limit to 3 results for better chat experience
-        "Chat Research"
-      );
-      
-      if (result && result.researchId) {
-        // Poll for research status
-        let completed = false;
-        let attempts = 0;
-        const maxAttempts = 30;
+      try {
+        // Start a real-time research process
+        const sources = ['arxiv', 'news_api', 'tech_blogs'];
+        const result = await researchApi.startRealtimeResearch(
+          topic,
+          sources,
+          3 // Limit to 3 results for better chat experience
+        );
         
-        while (!completed && attempts < maxAttempts) {
-          attempts++;
-          await new Promise(resolve => setTimeout(resolve, 1000));
+        if (result && result.researchId) {
+          // Poll for research status
+          let completed = false;
+          let attempts = 0;
+          const maxAttempts = 30;
           
-          try {
-            const status = await researchApi.getProcessStatus(result.researchId);
+          while (!completed && attempts < maxAttempts) {
+            attempts++;
+            await new Promise(resolve => setTimeout(resolve, 1000));
             
-            // Update the progress in the message
-            const progress = Math.min(Math.floor((attempts / maxAttempts) * 100), 95);
-            updateResearchProgress(messageId, progress);
-            
-            if (status.status === 'completed') {
-              completed = true;
-              const documents = status.documents || [];
+            try {
+              const status = await researchApi.getProcessStatus(result.researchId);
               
-              // Get the AI to generate a summary response with the research data
-              const summaryResponse = await getAIResearchSummary(topic, documents);
+              // Update the progress in the message
+              const progress = Math.min(Math.floor((attempts / maxAttempts) * 100), 95);
+              updateResearchProgress(messageId, progress);
               
-              // Update the message with the completed research
-              setMessages(prevMessages => 
-                prevMessages.map(msg => 
-                  msg.id === messageId 
-                    ? { 
-                        ...msg, 
-                        isResearching: false,
-                        content: summaryResponse || `Here's what I found about ${topic}:`,
-                        researchResults: documents 
-                      } 
-                    : msg
-                )
-              );
-              break;
+              if (status.status === 'completed') {
+                completed = true;
+                const documents = status.documents || [];
+                
+                // Get the AI to generate a summary response with the research data
+                const summaryResponse = await getAIResearchSummary(topic, documents);
+                
+                // Update the message with the completed research
+                setMessages(prevMessages => 
+                  prevMessages.map(msg => 
+                    msg.id === messageId 
+                      ? { 
+                          ...msg, 
+                          isResearching: false,
+                          content: summaryResponse || `Here's what I found about ${topic}:`,
+                          researchResults: documents 
+                        } 
+                      : msg
+                  )
+                );
+                break;
+              }
+            } catch (error) {
+              console.error("Error polling research status:", error);
+              // Continue trying even if there's an error
             }
-          } catch (error) {
-            console.error("Error polling research status:", error);
-            // Continue trying even if there's an error
+          }
+          
+          // If we hit the max attempts without completion
+          if (!completed) {
+            // Use fallback to regular AI response instead of showing error
+            try {
+              const aiResponse = await sendMessage(`Please tell me about ${topic}`, user?.id || 'anonymous');
+              updateMessageWithResearchSuccess(messageId, aiResponse);
+            } catch (fallbackError) {
+              console.error("Error with fallback response:", fallbackError);
+              updateMessageWithResearchFailure(messageId, "I couldn't complete the research, but here's what I know about this topic.");
+            }
+          }
+        } else {
+          // Use fallback to regular AI response instead of showing error
+          try {
+            const aiResponse = await sendMessage(`Please tell me about ${topic}`, user?.id || 'anonymous');
+            updateMessageWithResearchSuccess(messageId, aiResponse);
+          } catch (fallbackError) {
+            console.error("Error with fallback response:", fallbackError);
+            updateMessageWithResearchFailure(messageId, "I couldn't start the research process, but I can still try to help.");
           }
         }
-        
-        // If we hit the max attempts without completion
-        if (!completed) {
-          updateMessageWithResearchFailure(messageId, "Research is taking longer than expected. Please check the Research page for results.");
+      } catch (researchError) {
+        console.error("Error performing research:", researchError);
+        // Use fallback to regular AI response instead of showing error
+        try {
+          const aiResponse = await sendMessage(`Please tell me about ${topic}`, user?.id || 'anonymous');
+          updateMessageWithResearchSuccess(messageId, aiResponse);
+        } catch (fallbackError) {
+          console.error("Error with fallback response:", fallbackError);
+          updateMessageWithResearchFailure(messageId, "I couldn't perform the research, but I can still answer your question.");
         }
-      } else {
-        updateMessageWithResearchFailure(messageId, "Couldn't start the research process. Please try again.");
       }
     } catch (error) {
-      console.error("Error performing research:", error);
-      updateMessageWithResearchFailure(messageId, "An error occurred while researching. Please try again later.");
+      console.error("Error in research process:", error);
+      // Use fallback to regular AI response
+      try {
+        const aiResponse = await sendMessage(`Please tell me about ${topic}`, user?.id || 'anonymous');
+        updateMessageWithResearchSuccess(messageId, aiResponse);
+      } catch (fallbackError) {
+        console.error("Critical error in research and fallback:", fallbackError);
+        updateMessageWithResearchFailure(messageId, "I'm having trouble processing your request. Please try again with a different question.");
+      }
     }
   };
 
@@ -570,6 +603,21 @@ export default function TwinBotChatPage() {
           ? { 
               ...msg, 
               content: `Researching... ${progress}% complete` 
+            } 
+          : msg
+      )
+    );
+  };
+
+  // Helper function to update message with research success
+  const updateMessageWithResearchSuccess = (messageId: string, content: string) => {
+    setMessages(prevMessages => 
+      prevMessages.map(msg => 
+        msg.id === messageId 
+          ? { 
+              ...msg, 
+              isResearching: false,
+              content: content
             } 
           : msg
       )
@@ -685,8 +733,8 @@ export default function TwinBotChatPage() {
       // Check if this is a research request
       const isResearchRequest = checkIfResearchRequest(inputValue)
       
-      // Generate AI response
-      let aiResponseText: string
+      // Initialize aiResponseText to prevent "undefined" issues
+      let aiResponseText = "";
       
       if (isCalendarRequest) {
         try {
@@ -713,23 +761,33 @@ export default function TwinBotChatPage() {
         }
       } else if (isResearchRequest) {
         // Add an initial response indicating research is starting
+        const researchMessageId = `bot_${Date.now()}`;
         setMessages(prevMessages => [
           ...prevMessages,
           {
-            id: `bot_${Date.now()}`,
+            id: researchMessageId,
             content: `Researching about "${extractResearchTopic(inputValue)}"...`,
-        isUser: false,
-        timestamp: new Date(),
+            isUser: false,
+            timestamp: new Date(),
             isResearching: true
           }
         ]);
         
+        // Don't need to set aiResponseText for research requests since we're handling it separately
         // Perform the research asynchronously
-        performResearch(inputValue, `bot_${Date.now()}`)
+        performResearch(inputValue, researchMessageId);
+        
+        // Return early to avoid the rest of the message handling code
+        setIsLoading(false);
+        return;
       } else {
         try {
           // Standard AI response
-          const response = await sendMessage(inputValue, user?.id || 'anonymous')
+          const response = await sendMessage(
+            inputValue, 
+            user?.id || 'anonymous',
+            currentConversationId  // Pass the conversation ID for context
+          )
           
           // Handle different response formats
           if (typeof response === 'string') {
@@ -755,6 +813,11 @@ export default function TwinBotChatPage() {
         }
       }
       
+      // Make sure aiResponseText is always a string
+      if (typeof aiResponseText !== 'string') {
+        aiResponseText = String(aiResponseText || "I didn't get a proper response. Please try again.");
+      }
+      
       // Generate AI message object
       const aiMessage: Message = {
         id: `ai_${Date.now().toString()}`,
@@ -764,7 +827,7 @@ export default function TwinBotChatPage() {
       }
       
       // Check if the response contains calendar event information
-      if (isCalendarRequest) {
+      if (isCalendarRequest && aiResponseText) {
         try {
           // For calendar event requests, try to extract from the response
           const eventDetails = extractEventFromAIResponse(aiResponseText)
@@ -794,31 +857,35 @@ export default function TwinBotChatPage() {
       // Start typing effect
       simulateTyping(aiResponseText, typingMessageId)
       
-      // Save AI message to Supabase with proper metadata
-      const aiSaveResult = await saveConversationMessage(
-        aiResponseText,
-        'assistant',
-        {
-          conversationId: currentConversationId,
-          timestamp: aiMessage.timestamp.toISOString(),
-          calendarEvent: aiMessage.calendarEvent,
-          isCalendarEvent: isCalendarRequest
-        }
-      )
-      
-      if (!aiSaveResult.success) {
-        console.error('Failed to save AI message to database:', aiSaveResult.error)
+      try {
+        // Save AI message to Supabase with proper metadata
+        const aiSaveResult = await saveConversationMessage(
+          aiResponseText,
+          'assistant',
+          {
+            conversationId: currentConversationId,
+            timestamp: aiMessage.timestamp.toISOString(),
+            calendarEvent: aiMessage.calendarEvent,
+            isCalendarEvent: isCalendarRequest
+          }
+        )
         
-        // Check if this is a schema-related error
-        if (aiSaveResult.error && 
-            (aiSaveResult.error.includes('conversation_id') || 
-             aiSaveResult.error.includes('column') || 
-             aiSaveResult.error.includes('schema'))) {
-          console.warn('Database schema issue detected. You may need to run the SQL migration.');
-          // Set the banner state to true
-          setShowSchemaBanner(true);
-          // Just continue with the conversation in memory only
+        if (!aiSaveResult.success) {
+          console.error('Failed to save AI message to database:', aiSaveResult.error)
+          
+          // Check if this is a schema-related error
+          if (aiSaveResult.error && 
+              (aiSaveResult.error.includes('conversation_id') || 
+              aiSaveResult.error.includes('column') || 
+              aiSaveResult.error.includes('schema'))) {
+            console.warn('Database schema issue detected. You may need to run the SQL migration.');
+            // Set the banner state to true
+            setShowSchemaBanner(true);
+            // Just continue with the conversation in memory only
+          }
         }
+      } catch (saveError) {
+        console.error('Exception saving AI message:', saveError);
       }
       
       // Update chat history with new messages
@@ -832,11 +899,11 @@ export default function TwinBotChatPage() {
           
           // Add the new messages
           chat.messages = [...chat.messages, userMessage, aiMessage]
-          chat.lastMessage = aiMessage.content.substring(0, 40) + (aiMessage.content.length > 40 ? '...' : '')
+          chat.lastMessage = aiResponseText.substring(0, 40) + (aiResponseText.length > 40 ? '...' : '')
           chat.timestamp = aiMessage.timestamp
           
           updatedHistory[chatIndex] = chat
-        return updatedHistory
+          return updatedHistory
         } else {
           // Create a new chat history entry
           return [
@@ -869,9 +936,9 @@ export default function TwinBotChatPage() {
         ...prev,
         {
           id: `error_${Date.now().toString()}`,
-        content: "Sorry, I encountered an error. Please try again.",
-        isUser: false,
-        timestamp: new Date(),
+          content: "Sorry, I encountered an error. Please try again.",
+          isUser: false,
+          timestamp: new Date(),
           error: error instanceof Error ? error.message : String(error)
         }
       ])

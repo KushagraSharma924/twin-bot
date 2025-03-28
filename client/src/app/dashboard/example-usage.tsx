@@ -10,7 +10,7 @@ export default function DashboardExample() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
   // Example tracked interests for the right side content
-  const interests = ['AI', 'Machine Learning', 'Web Development'];
+  const interests = [""];
   
   return (
     <div className="flex flex-col min-h-screen">
