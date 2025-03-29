@@ -15,7 +15,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Configuration
-const OLLAMA_HOST = process.env.OLLAMA_HOST || 'https://chatbot-x8x4.onrender.com/ollama';
+const OLLAMA_HOST = process.env.OLLAMA_HOST || 'https://chatbot-x8x4.onrender.com';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
 const EMBEDDING_DIM = parseInt(process.env.EMBEDDING_DIM || '384'); // Default embedding dimension
 const LEARNING_RATE = parseFloat(process.env.LEARNING_RATE || '0.001');

@@ -9,7 +9,7 @@ dotenv.config();
 import ollama from 'ollama';
 
 // Configure Ollama
-const ollamaHost = process.env.OLLAMA_HOST || 'https://chatbot-x8x4.onrender.com/ollama';
+const ollamaHost = process.env.OLLAMA_HOST || 'https://chatbot-x8x4.onrender.com';
 const ollamaModel = process.env.OLLAMA_MODEL || 'llama3';
 
 // Add fallback configuration for OpenAI
