@@ -139,6 +139,11 @@ export default function TwinBotChatPage() {
 
   // Load user and chat history from Supabase
   useEffect(() => {
+    // Clear any cached fallback messages or service status
+    localStorage.removeItem('serviceStatus');
+    localStorage.removeItem('fallbackMode');
+    localStorage.removeItem('fallbackReason');
+    
     // Get the current user
     const currentUser = getUser()
     if (currentUser) {
@@ -1057,7 +1062,8 @@ export default function TwinBotChatPage() {
         throw new Error('Authentication token not found')
       }
       
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-x8x4.onrender.com'
+      // Updated to match the API URL used elsewhere in the codebase
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-z6w5.onrender.com'
       console.log(`Deleting conversation ${chatId} via API: ${API_URL}/api/conversations/delete`)
       
       // Make the delete request to the server
@@ -1118,8 +1124,18 @@ export default function TwinBotChatPage() {
         chat.id === chatId ? { ...chat, isDeleting: false } : chat
       ))
       
+      // Improved error message for network issues
+      let errorMessage = 'Unknown error';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        // Detect network connectivity issues
+        if (error.message.includes('Failed to fetch') || error.message.includes('Network request failed')) {
+          errorMessage = 'Network error: Could not connect to the server. Please check your internet connection.';
+        }
+      }
+      
       // Set error message
-      setError(`Error deleting chat: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setError(`Error deleting chat: ${errorMessage}`);
       
       setIsLoading(false)
       return // Don't continue with UI deletion
@@ -1391,7 +1407,7 @@ export default function TwinBotChatPage() {
       const session = JSON.parse(localStorage.getItem('session') || '{}');
       const token = session.access_token;
       
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-x8x4.onrender.com'}/api/calendar/create-event`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-z6w5.onrender.com'}/api/calendar/create-event`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

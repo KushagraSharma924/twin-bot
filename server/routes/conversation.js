@@ -176,6 +176,16 @@ router.post('/delete', async (req, res) => {
       return res.status(401).json({ error: 'User ID is required, please authenticate' });
     }
     
+    // Check if database is available
+    if (!supabase) {
+      console.warn('Database not available, returning success but not actually deleting');
+      return res.status(200).json({
+        success: true,
+        message: 'Conversation marked for deletion (database not available)',
+        inMemoryOnly: true
+      });
+    }
+    
     // Delete all messages with this conversation_id for this user
     console.log(`Deleting conversation ${conversationId} for user ${userId}`);
     

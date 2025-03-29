@@ -1,4 +1,5 @@
 import { supabase } from '../config/index.js';
+import * as authService from '../services/authService.js';
 
 /**
  * Authentication middleware for regular API routes
@@ -14,6 +15,16 @@ export const authMiddleware = async (req, res, next) => {
     
     // Better error handling with specific error logging
     try {
+      // First, verify that Supabase service connection is working
+      const serviceAuthOk = await authService.verifySupabaseServiceAuth();
+      if (!serviceAuthOk) {
+        console.error('Service-level Supabase authentication is not working');
+        return res.status(503).json({ 
+          error: "Authentication service temporarily unavailable", 
+          message: "There's an issue connecting to our authentication service. Please try again later."
+        });
+      }
+      
       // Log attempt to connect to Supabase
       console.log('Attempting to authenticate with Supabase...');
       
@@ -21,6 +32,44 @@ export const authMiddleware = async (req, res, next) => {
       
       if (error) {
         console.error('Auth middleware error:', error.message);
+        
+        // Check for specific JWT errors
+        if (error.message.includes('missing sub claim')) {
+          console.log('JWT missing sub claim error, attempting to use fallback service key auth');
+          
+          // Try to extract user ID from the token via JWT decoding
+          try {
+            // Simple JWT parsing (this is a basic example, consider a proper JWT library)
+            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+            if (payload.user_id) {
+              // Look up the user profile directly using service key
+              const userProfile = await authService.getUserProfile(payload.user_id);
+              if (userProfile) {
+                console.log('Found user profile via service key fallback:', userProfile.id);
+                // Create a minimal user object
+                req.user = {
+                  id: userProfile.id,
+                  email: userProfile.email,
+                  user_metadata: userProfile
+                };
+                return next();
+              }
+            }
+          } catch (jwtParseError) {
+            console.error('Failed to parse JWT payload:', jwtParseError);
+          }
+        }
+        
+        // If refresh token error, suggest client to reauthenticate
+        if (error.message.includes('Invalid Refresh Token') ||
+            error.message.includes('Already Used')) {
+          return res.status(401).json({ 
+            error: "Session expired", 
+            code: "REFRESH_TOKEN_INVALID",
+            message: "Your session has expired. Please sign in again."
+          });
+        }
+        
         return res.status(401).json({ error: error.message });
       }
       
@@ -44,20 +93,14 @@ export const authMiddleware = async (req, res, next) => {
           const sixHoursFromNow = new Date(now.getTime() + (6 * 60 * 60 * 1000)); // 6 hours in milliseconds
           
           if (expiresAt < sixHoursFromNow) {
-            console.log('Refreshing session token to extend expiration');
-            // Refresh the session token
-            const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-            
-            if (!refreshError && refreshData.session) {
-              // Set a new token with very long expiration (90 days)
-              const { data: updateData, error: updateError } = await supabase.auth.updateUser({
-                data: { extendedSession: true }
-              });
-              
-              if (!updateError) {
-                console.log('Extended session token successfully');
-                // You could add the new token to the response headers if needed
-                res.setHeader('X-New-Auth-Token', refreshData.session.access_token);
+            console.log('Creating session with expiration time of 180 days');
+            // Instead of refreshing, create a completely new session with a long expiration
+            const refreshToken = session.data.session.refresh_token;
+            if (refreshToken) {
+              const refreshResult = await authService.refreshUserSession(refreshToken);
+              if (refreshResult.success) {
+                // Set new token in response header
+                res.setHeader('X-New-Auth-Token', refreshResult.session.access_token);
               }
             }
           }

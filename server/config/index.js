@@ -1,22 +1,43 @@
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import { google } from 'googleapis';
+import path from 'path';
+import fs from 'fs';
 
 // Load environment variables
 dotenv.config();
 
-// Validate required environment variables
+// Load server/.env if running in production mode or if Supabase credentials are missing
+if (process.env.NODE_ENV === 'production' || !process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
+  try {
+    const serverEnvPath = path.join(process.cwd(), 'server', '.env');
+    if (fs.existsSync(serverEnvPath)) {
+      console.log('Loading server/.env file for production or missing credentials');
+      dotenv.config({ path: serverEnvPath });
+    }
+  } catch (error) {
+    console.error('Error loading server/.env file:', error);
+  }
+}
+
+// Log environment status for debugging
+console.log('Environment:', process.env.NODE_ENV);
+console.log('Working directory:', process.cwd());
+
+// Check if we have Supabase config
+const hasDatabaseConfig = process.env.SUPABASE_URL && process.env.SUPABASE_KEY;
+
+// Validate environment variables, but don't crash the server
 if (!process.env.SUPABASE_URL) {
-  console.error('ERROR: SUPABASE_URL environment variable is required');
-  console.log('Available env vars:', Object.keys(process.env).filter(key => key.startsWith('SUPA')));
+  console.warn('WARNING: SUPABASE_URL environment variable is missing - database features will be disabled');
 }
 
 if (!process.env.SUPABASE_KEY) {
-  console.error('ERROR: SUPABASE_KEY environment variable is required');
+  console.warn('WARNING: SUPABASE_KEY environment variable is missing - database features will be disabled');
 }
 
 if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-  console.error('WARNING: Google API credentials are missing');
+  console.warn('WARNING: Google API credentials are missing - Google OAuth features will be disabled');
 }
 
 // Export configuration
@@ -28,7 +49,8 @@ export const config = {
   // Supabase config
   supabase: {
     url: process.env.SUPABASE_URL,
-    key: process.env.SUPABASE_KEY
+    key: process.env.SUPABASE_KEY,
+    enabled: hasDatabaseConfig
   },
   
   // Google OAuth config
@@ -57,31 +79,64 @@ export const config = {
   }
 };
 
-// Initialize Supabase client with validation
-export const supabase = config.supabase.url && config.supabase.key 
+// Initialize Supabase client only if configuration is available
+export const supabase = hasDatabaseConfig
   ? createClient(config.supabase.url, config.supabase.key, {
       auth: {
         persistSession: false,
         autoRefreshToken: true,
+        detectSessionInUrl: false,
       },
       global: {
-        fetch: (url, options) => {
+        headers: {
+          'apikey': config.supabase.key,
+          'Authorization': `Bearer ${config.supabase.key}`,
+          'Content-Type': 'application/json',
+        },
+        fetch: (url, options = {}) => {
+          // Always ensure required headers are present
           const fetchOptions = {
             ...options,
             timeout: 30000, // Increase timeout to 30 seconds
             headers: {
-              ...options?.headers,
+              // Ensure these headers are always included
+              'apikey': config.supabase.key,
+              'Authorization': `Bearer ${config.supabase.key}`,
+              'Content-Type': 'application/json',
               'Cache-Control': 'no-cache',
+              // Include any headers that were passed
+              ...(options.headers || {})
             },
           };
+          
+          // Debug trace
+          console.log(`Supabase request to ${url.toString().split('?')[0]}`);
           
           // Custom fetch with retry logic
           const customFetch = async (attempt = 1, maxAttempts = 3) => {
             try {
-              return await fetch(url, fetchOptions);
+              const response = await fetch(url, fetchOptions);
+              
+              // If we get a 401 or 403, try to refresh the headers and retry
+              if ((response.status === 401 || response.status === 403) && attempt < maxAttempts) {
+                console.log(`Auth error on attempt ${attempt}, refreshing headers and retrying...`);
+                
+                // Refresh the headers
+                fetchOptions.headers = {
+                  ...fetchOptions.headers,
+                  'apikey': config.supabase.key,
+                  'Authorization': `Bearer ${config.supabase.key}`,
+                };
+                
+                // Wait a bit before retrying
+                await new Promise(resolve => setTimeout(resolve, 500 * Math.pow(2, attempt - 1)));
+                return customFetch(attempt + 1, maxAttempts);
+              }
+              
+              return response;
             } catch (error) {
               if (attempt < maxAttempts) {
-                console.log(`Fetch attempt ${attempt} failed, retrying...`);
+                console.log(`Fetch attempt ${attempt} failed, retrying...`, error.message);
                 // Exponential backoff - wait longer between each retry
                 await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt - 1)));
                 return customFetch(attempt + 1, maxAttempts);
@@ -97,17 +152,31 @@ export const supabase = config.supabase.url && config.supabase.key
     })
   : null;
 
-// Initialize Google OAuth2 client
-export const oauth2Client = new google.auth.OAuth2(
-  config.google.clientId,
-  config.google.clientSecret,
-  config.google.redirectUri
-);
+// Log Supabase status
+if (supabase) {
+  console.log('Supabase client initialized successfully');
+} else {
+  console.warn('Supabase client not initialized - running without database functionality');
+}
+
+// Initialize Google OAuth2 client if credentials are available
+export const oauth2Client = config.google.clientId && config.google.clientSecret
+  ? new google.auth.OAuth2(
+      config.google.clientId,
+      config.google.clientSecret,
+      config.google.redirectUri
+    )
+  : null;
 
 /**
  * Initialize pgvector extension if needed
  */
 export async function initPgVector() {
+  if (!supabase) {
+    console.warn('Skipping pgvector initialization - Supabase not configured');
+    return { success: false, message: 'Supabase not configured' };
+  }
+  
   try {
     console.log('Checking pgvector extension status...');
     

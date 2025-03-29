@@ -2,6 +2,9 @@ import express from 'express';
 import { supabase } from '../config/index.js';
 import { createClient } from '@supabase/supabase-js';
 import * as authController from '../controllers/auth.js';
+import { authMiddleware } from '../middleware/auth.js';
+import * as authService from '../services/authService.js';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
@@ -152,6 +155,54 @@ router.post('/refresh', authController.refreshToken);
  * DELETE /api/auth/admin/users/:userId
  */
 router.delete('/admin/users/:userId', authController.deleteUsers);
+
+/**
+ * Authentication status check endpoint
+ * GET /api/auth/status
+ */
+router.get('/status', authMiddleware, async (req, res) => {
+  try {
+    // If we got here, authentication was successful
+    return res.status(200).json({
+      authenticated: true,
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        role: req.user.role || 'user',
+      }
+    });
+  } catch (error) {
+    console.error('Error checking auth status:', error);
+    return res.status(500).json({ error: 'Failed to check authentication status' });
+  }
+});
+
+/**
+ * Test direct database access with service key
+ * GET /api/auth/verify-service
+ */
+router.get('/verify-service', async (req, res) => {
+  try {
+    const serviceAuth = await authService.verifySupabaseServiceAuth();
+    if (serviceAuth) {
+      return res.status(200).json({
+        success: true,
+        message: 'Service-level authentication working correctly'
+      });
+    } else {
+      return res.status(500).json({
+        success: false,
+        message: 'Service-level authentication failed'
+      });
+    }
+  } catch (error) {
+    console.error('Error verifying service auth:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: error.message || 'Unknown error verifying service authentication'
+    });
+  }
+});
 
 /**
  * Helper function to extract username from email

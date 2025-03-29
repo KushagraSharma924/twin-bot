@@ -10,8 +10,23 @@ import logger from '../utils/logger.js';
 import * as aiService from './aiService.js';
 import { config, supabase as existingSupabase } from '../config/index.js';
 
-// Initialize Supabase client if not already initialized
-const supabase = existingSupabase || createClient(config.supabase.url, config.supabase.key);
+// Check if Supabase is available from config
+const isSupabaseAvailable = !!existingSupabase;
+
+// Use the existing client or a mock implementation
+const supabase = existingSupabase;
+
+// Log status
+if (!isSupabaseAvailable) {
+  console.warn('Supabase client not available in researchService - operating in memory-only mode');
+}
+
+// In-memory storage for research when database is not available
+const inMemoryStorage = {
+  processes: new Map(),
+  documents: new Map(),
+  getNextId: () => `mem_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+};
 
 // Research sources
 export const RESEARCH_SOURCES = {
@@ -94,6 +109,62 @@ class ResearchService {
   async getResearchDocuments(userId, options = {}) {
     try {
       logger.info('Getting research documents', { userId, options });
+      
+      // Handle case when Supabase is not available
+      if (!isSupabaseAvailable) {
+        logger.warn('Supabase not available, using in-memory storage');
+        
+        // Get documents from in-memory storage
+        let documents = Array.from(inMemoryStorage.documents.values())
+          .filter(doc => doc.user_id === userId);
+        
+        const { type, category, query, page = 1, limit = 20, sort = 'dateAdded', order = 'desc' } = options;
+        
+        // Apply filters
+        if (type) {
+          documents = documents.filter(doc => doc.type === type);
+        }
+        
+        if (category) {
+          documents = documents.filter(doc => doc.category === category);
+        }
+        
+        if (query) {
+          const queryLower = query.toLowerCase();
+          documents = documents.filter(doc => 
+            doc.title.toLowerCase().includes(queryLower) || 
+            (doc.excerpt && doc.excerpt.toLowerCase().includes(queryLower)) ||
+            (doc.content && doc.content.toLowerCase().includes(queryLower))
+          );
+        }
+        
+        // Apply sorting
+        documents.sort((a, b) => {
+          const aValue = a[sort] || '';
+          const bValue = b[sort] || '';
+          
+          if (order === 'asc') {
+            return aValue > bValue ? 1 : -1;
+          } else {
+            return aValue < bValue ? 1 : -1;
+          }
+        });
+        
+        // Apply pagination
+        const startIndex = (page - 1) * limit;
+        const endIndex = startIndex + limit;
+        const paginatedDocuments = documents.slice(startIndex, endIndex);
+        
+        return {
+          documents: paginatedDocuments,
+          pagination: {
+            page,
+            limit,
+            total: documents.length,
+            pages: Math.ceil(documents.length / limit)
+          }
+        };
+      }
       
       const { type, category, query, page = 1, limit = 20, sort = 'dateAdded', order = 'desc' } = options;
       
@@ -1444,6 +1515,62 @@ class ResearchService {
     }
     
     return Array.from(uniqueResults.values());
+  }
+
+  /**
+   * Add a new research document for a user
+   * @param {string} userId - User ID
+   * @param {Object} documentData - Document data
+   * @returns {Promise<Object>} - Saved document
+   */
+  async addDocument(userId, documentData) {
+    try {
+      logger.info('Adding research document', { userId, docType: documentData.type });
+      
+      const timestamp = new Date().toISOString();
+      const docId = uuidv4();
+      
+      const document = {
+        id: docId,
+        user_id: userId,
+        created_at: timestamp,
+        updated_at: timestamp,
+        ...documentData
+      };
+      
+      // Handle case when Supabase is not available
+      if (!isSupabaseAvailable) {
+        logger.warn('Supabase not available, storing document in memory');
+        
+        // Store in memory
+        inMemoryStorage.documents.set(docId, document);
+        
+        return {
+          success: true,
+          document,
+          message: 'Document saved in memory (Supabase unavailable)'
+        };
+      }
+      
+      const { error, data } = await supabase
+        .from('research_documents')
+        .insert(document)
+        .select()
+        .single();
+      
+      if (error) {
+        throw new Error(`Error adding research document: ${error.message}`);
+      }
+      
+      return {
+        success: true,
+        document: data,
+        message: 'Document saved in database'
+      };
+    } catch (error) {
+      logger.error('Error in addDocument', { error: error.message, stack: error.stack });
+      throw error;
+    }
   }
 }
 

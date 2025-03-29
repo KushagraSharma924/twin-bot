@@ -10,14 +10,15 @@ import {
   Mail,
   Calendar,
   FileText,
-  MessageSquare,
+  MessageCircle,
   Menu,
   Bot,
-  LogOut
+  LogOut,
+  MessagesSquare
 } from "lucide-react"
 
 interface SidebarProps {
-  activePage?: "dashboard" | "chat" | "emails" | "calendar" | "research"
+  activePage?: "dashboard" | "chat" | "emails" | "calendar" | "research" | "direct-chat"
   isOpen?: boolean
   setIsOpen?: Dispatch<SetStateAction<boolean>>
 }
@@ -66,40 +67,41 @@ export default function Sidebar({ activePage = "chat", isOpen, setIsOpen }: Side
       </div>
       <div className="flex-1 py-4">
         <nav className="space-y-1 px-2">
-          <Link 
-            href="/dashboard" 
-            className={`flex items-center w-full p-2 ${activePage === "dashboard" ? "text-white bg-[#272727]" : "text-gray-300 hover:text-white hover:bg-[#272727]"} rounded-md`}
-          >
-            <Home className="h-5 w-5 mr-2" />
-            {sidebarOpen && <span>Dashboard</span>}
+          <Link href="/dashboard" passHref>
+            <button className={`flex items-center space-x-3 ${activePage === "dashboard" ? "bg-[#272727] text-white" : "text-gray-400"} hover:bg-[#272727] hover:text-white px-4 py-3 w-full text-left`}>
+              <Home size={20} />
+              {sidebarOpen && <span>Dashboard</span>}
+            </button>
           </Link>
-          <Link 
-            href="/dashboard/twinbot" 
-            className={`flex items-center w-full p-2 ${activePage === "chat" ? "text-white bg-[#272727]" : "text-gray-300 hover:text-white hover:bg-[#272727]"} rounded-md`}
-          >
-            <MessageSquare className="h-5 w-5 mr-2" />
-            {sidebarOpen && <span>Chat</span>}
+          <Link href="/dashboard/twinbot" passHref>
+            <button className={`flex items-center space-x-3 ${activePage === "chat" ? "bg-[#272727] text-white" : "text-gray-400"} hover:bg-[#272727] hover:text-white px-4 py-3 w-full text-left`}>
+              <MessagesSquare size={20} />
+              {sidebarOpen && <span>Chat</span>}
+            </button>
           </Link>
-          <Link 
-            href="/dashboard/emails" 
-            className={`flex items-center w-full p-2 ${activePage === "emails" ? "text-white bg-[#272727]" : "text-gray-300 hover:text-white hover:bg-[#272727]"} rounded-md`}
-          >
-            <Mail className="h-5 w-5 mr-2" />
-            {sidebarOpen && <span>Emails</span>}
+          <Link href="/direct-chat" passHref>
+            <button className={`flex items-center space-x-3 ${activePage === "direct-chat" ? "bg-[#272727] text-white" : "text-gray-400"} hover:bg-[#272727] hover:text-white px-4 py-3 w-full text-left`}>
+              <MessageCircle size={20} />
+              {sidebarOpen && <span>Direct Chat</span>}
+            </button>
           </Link>
-          <Link 
-            href="/dashboard/calendar" 
-            className={`flex items-center w-full p-2 ${activePage === "calendar" ? "text-white bg-[#272727]" : "text-gray-300 hover:text-white hover:bg-[#272727]"} rounded-md`}
-          >
-            <Calendar className="h-5 w-5 mr-2" />
-            {sidebarOpen && <span>Calendar</span>}
+          <Link href="/dashboard/emails" passHref>
+            <button className={`flex items-center space-x-3 ${activePage === "emails" ? "bg-[#272727] text-white" : "text-gray-400"} hover:bg-[#272727] hover:text-white px-4 py-3 w-full text-left`}>
+              <Mail size={20} />
+              {sidebarOpen && <span>Emails</span>}
+            </button>
           </Link>
-          <Link 
-            href="/dashboard/research" 
-            className={`flex items-center w-full p-2 ${activePage === "research" ? "text-white bg-[#272727]" : "text-gray-300 hover:text-white hover:bg-[#272727]"} rounded-md`}
-          >
-            <FileText className="h-5 w-5 mr-2" />
-            {sidebarOpen && <span>Research</span>}
+          <Link href="/dashboard/calendar" passHref>
+            <button className={`flex items-center space-x-3 ${activePage === "calendar" ? "bg-[#272727] text-white" : "text-gray-400"} hover:bg-[#272727] hover:text-white px-4 py-3 w-full text-left`}>
+              <Calendar size={20} />
+              {sidebarOpen && <span>Calendar</span>}
+            </button>
+          </Link>
+          <Link href="/dashboard/research" passHref>
+            <button className={`flex items-center space-x-3 ${activePage === "research" ? "bg-[#272727] text-white" : "text-gray-400"} hover:bg-[#272727] hover:text-white px-4 py-3 w-full text-left`}>
+              <FileText size={20} />
+              {sidebarOpen && <span>Research</span>}
+            </button>
           </Link>
         </nav>
       </div>

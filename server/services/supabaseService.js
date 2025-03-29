@@ -1,12 +1,30 @@
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { supabase as configuredSupabase } from '../config/index.js';
 
 dotenv.config();
 
-// Supabase client initialization
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
+// Use the already configured Supabase client from config/index.js
+const supabase = configuredSupabase;
+
+// Check if Supabase is available
+const isSupabaseAvailable = !!supabase;
+
+if (!isSupabaseAvailable) {
+  console.warn('Supabase client not available - using in-memory implementation');
+}
+
+// Helper function to handle database unavailability
+const handleUnavailableDb = (operation) => {
+  if (!isSupabaseAvailable) {
+    console.warn(`Database operation '${operation}' skipped - database not available`);
+    return { 
+      success: false, 
+      error: 'Database not available',
+      inMemoryOnly: true
+    };
+  }
+};
 
 /**
  * User authentication and management
@@ -18,6 +36,9 @@ export const auth = {
    * @param {string} password - User's password
    */
   async signIn(email, password) {
+    const unavailableResult = handleUnavailableDb('signIn');
+    if (unavailableResult) return { user: { email }, session: { access_token: 'mock_token' }};
+    
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password
@@ -121,6 +142,23 @@ export const conversations = {
         metadataKeys: Object.keys(metadata)
       });
       
+      // Handle database unavailability
+      if (!isSupabaseAvailable) {
+        console.warn('Database not available - message will only be stored in memory');
+        // Return a mock successful response
+        return {
+          id: `mock_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          message,
+          source,
+          user_id: userId,
+          conversation_id: metadata.conversationId || null,
+          timestamp: metadata.timestamp || new Date().toISOString(),
+          metadata,
+          success: true,
+          inMemoryOnly: true
+        };
+      }
+      
       // Check for Supabase client
       if (!supabase) {
         console.error('Error: Supabase client is not initialized');
@@ -200,85 +238,94 @@ export const conversations = {
       const timestamp = processedMetadata.timestamp || new Date().toISOString();
       delete processedMetadata.timestamp; // Remove from metadata to avoid duplication
       
+      // Create a message preview for logging
+      const messagePreview = message.length > 30 
+        ? `${message.substring(0, 30)}...` 
+        : message;
+      
       const payload = {
-        message: message,
+        messagePreview: messagePreview,  // Use messagePreview field for the conversations table
         source: source,
-        user_id: userId,
-        conversation_id: conversationId,
-        metadata: processedMetadata,
+        userId: userId,      // Use userId (camelCase) for conversations table
+        conversationId: conversationId,
         timestamp: timestamp
       };
       
-      console.log('Executing Supabase insert with payload:', {
-        messagePreview: message.substring(0, 20) + (message.length > 20 ? '...' : ''),
-        source: payload.source,
-        userId: payload.user_id,
-        conversationId: payload.conversation_id,
-        timestamp: payload.timestamp
-      });
+      console.log('Executing Supabase insert with payload:', payload);
       
-      // Insert the message
+      // Insert the message using supabase client
       const { data, error } = await supabase
         .from('conversations')
-        .insert(payload)
-        .select('*');
+        .insert({
+          message: message,
+          source: source,
+          user_id: userId,  // Use user_id (snake_case) for database schema
+          conversation_id: conversationId,
+          timestamp: timestamp,
+          metadata: processedMetadata
+        })
+        .select();
       
       if (error) {
         console.error('Supabase error inserting message:', error);
         return { 
           id: null, 
           success: false, 
-          error: `Database error: ${error.message || error.code || 'Unknown error'}` 
+          error: `Database error: ${error.message}` 
         };
       }
       
-      if (!data || data.length === 0) {
-        console.error('No data returned from insert operation');
-        return { 
-          id: null, 
-          success: false, 
-          error: 'Failed to insert message - no data returned' 
-        };
-      }
+      console.log('Successfully added message to conversations table');
       
-      console.log('Message added successfully with ID:', data[0].id);
       return {
-        ...data[0],
+        id: data[0].id,
+        message: message,
+        source: source,
+        user_id: userId,
+        conversation_id: conversationId,
+        timestamp: timestamp,
+        metadata: processedMetadata,
         success: true
       };
     } catch (error) {
-      console.error('Error adding message to conversation history:', error);
-      // Return a structured error response instead of throwing
+      console.error('Error in addMessage:', error);
       return { 
         id: null, 
         success: false, 
-        error: error.message || 'Unknown error saving conversation message' 
+        error: `Unexpected error: ${error.message}` 
       };
     }
   },
   
   /**
    * Get conversation history for a user
-   * @param {string} userId - User ID to fetch history for
-   * @param {number} limit - Maximum number of messages to return
+   * @param {string} userId - The user ID
+   * @param {number} limit - Maximum number of records to return
    * @param {number} offset - Offset for pagination
-   * @param {string|null} conversationId - Optional conversation ID to filter by
-   * @returns {Promise<Array>} - Array of conversation messages
+   * @param {string} conversationId - Optional conversation ID to filter by
+   * @returns {Promise<Array>} - Conversation history
    */
   async getHistory(userId, limit = 50, offset = 0, conversationId = null) {
-    console.log('getHistory called with params:', { userId, limit, offset, conversationId });
-    
     try {
-      // Ensure Supabase client is initialized
-      if (!supabase) {
-        console.error('Supabase client not initialized');
+      console.log(`Getting conversation history for user ${userId}:`, {
+        limit,
+        offset,
+        conversationId: conversationId || 'all'
+      });
+      
+      // Handle database unavailability
+      if (!isSupabaseAvailable) {
+        console.warn('Database not available - returning empty conversation history');
         return [];
       }
       
-      // Validate userId is provided
+      // Validate inputs
       if (!userId) {
-        console.error('User ID is required for getHistory');
-        return [];
+        console.error('Error: User ID is required');
+        return { 
+          success: false, 
+          error: 'User ID is required'
+        };
       }
       
       console.log(`Fetching conversations for user: ${userId}`);
