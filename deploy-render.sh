@@ -45,11 +45,15 @@ services:
         value: "10000"
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: "10000"
+    # Let Render assign its own port - our entrypoint script will use it
     healthCheckPath: /health
-    # Explicitly set the IP binding to avoid issues
+    # Use Render's standard HTTP port mapping
     autoDeploy: false
+    # Add resource specifications
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 10
 EOF
 
 echo -e "${GREEN}Render deployment files created in ${RENDER_DIR} directory${NC}"

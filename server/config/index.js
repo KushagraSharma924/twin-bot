@@ -59,7 +59,42 @@ export const config = {
 
 // Initialize Supabase client with validation
 export const supabase = config.supabase.url && config.supabase.key 
-  ? createClient(config.supabase.url, config.supabase.key)
+  ? createClient(config.supabase.url, config.supabase.key, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: true,
+      },
+      global: {
+        fetch: (url, options) => {
+          const fetchOptions = {
+            ...options,
+            timeout: 30000, // Increase timeout to 30 seconds
+            headers: {
+              ...options?.headers,
+              'Cache-Control': 'no-cache',
+            },
+          };
+          
+          // Custom fetch with retry logic
+          const customFetch = async (attempt = 1, maxAttempts = 3) => {
+            try {
+              return await fetch(url, fetchOptions);
+            } catch (error) {
+              if (attempt < maxAttempts) {
+                console.log(`Fetch attempt ${attempt} failed, retrying...`);
+                // Exponential backoff - wait longer between each retry
+                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt - 1)));
+                return customFetch(attempt + 1, maxAttempts);
+              }
+              console.error(`All fetch attempts failed for: ${url}`);
+              throw error;
+            }
+          };
+          
+          return customFetch();
+        }
+      }
+    })
   : null;
 
 // Initialize Google OAuth2 client

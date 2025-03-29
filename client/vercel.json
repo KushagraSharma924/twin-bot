@@ -4,7 +4,7 @@
   "installCommand": "npm install",
   "regions": ["iad1"],
   "env": {
-    "NEXT_PUBLIC_API_URL": "https://chatbot-z6w5.onrender.com"
+    "NEXT_PUBLIC_API_URL": "http://localhost:5002"
   },
   "outputDirectory": ".next",
   "headers": [

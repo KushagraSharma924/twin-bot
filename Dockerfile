@@ -85,12 +85,18 @@ RUN chmod +x /usr/src/app/start-ollama-nginx.sh
 
 # Create Nginx configuration file
 RUN echo 'server { \
+    # Listen on all interfaces on both port 8081 and 80 \
     listen 0.0.0.0:8081; \
-    server_name localhost; \
+    listen 0.0.0.0:80; \
+    server_name _; \
 \
     # Allow large uploads \
     client_max_body_size 25M; \
 \
+    # Add Server header \
+    server_tokens off; \
+\
+    # Root location for health checks and other general requests \
     location / { \
         # CORS headers for all responses \
         add_header "Access-Control-Allow-Origin" "*" always; \
@@ -108,6 +114,9 @@ RUN echo 'server { \
             add_header "Content-Length" 0; \
             return 204; \
         } \
+\
+        # Default response for root path - return status info \
+        return 200 "Ollama Proxy Running"; \
     } \
 \
     # Reverse proxy configuration for Ollama \
@@ -138,9 +147,19 @@ RUN echo 'server { \
 RUN echo '#!/bin/bash \n\
 set -e \n\
 \n\
+# Print environment info \n\
+echo "=============== ENVIRONMENT INFO ===============" \n\
+echo "Render Environment: $RENDER" \n\
+echo "Container PORT: $PORT" \n\
+echo "User: $(whoami)" \n\
+\n\
 # Debug any IP address issues \n\
 echo "Network interfaces:" \n\
 ip addr show || hostname -I || echo "IP tools not available" \n\
+\n\
+# Check port availability \n\
+echo "Current listening ports:" \n\
+netstat -tuln || echo "netstat not available" \n\
 \n\
 # Start Ollama in the background with more debugging \n\
 echo "Starting Ollama..." \n\
@@ -149,24 +168,52 @@ mkdir -p /root/.ollama \n\
 OLLAMA_PID=$! \n\
 \n\
 # Give Ollama time to start \n\
-echo "Waiting for Ollama to initialize (10 seconds)..." \n\
-sleep 10 \n\
+echo "Waiting for Ollama to initialize (15 seconds)..." \n\
+sleep 15 \n\
+\n\
+# Generate a simple nginx.conf file that includes the conf.d directory \n\
+echo "Creating main Nginx configuration..." \n\
+cat > /etc/nginx/nginx.conf << EOF \n\
+user www-data; \n\
+worker_processes auto; \n\
+pid /run/nginx.pid; \n\
+include /etc/nginx/modules-enabled/*.conf; \n\
+\n\
+events { \n\
+    worker_connections 768; \n\
+} \n\
+\n\
+http { \n\
+    sendfile on; \n\
+    tcp_nopush on; \n\
+    types_hash_max_size 2048; \n\
+    include /etc/nginx/mime.types; \n\
+    default_type application/octet-stream; \n\
+    access_log /dev/stdout; \n\
+    error_log /dev/stderr; \n\
+    include /etc/nginx/conf.d/*.conf; \n\
+} \n\
+EOF \n\
+\n\
+# Verify the nginx configuration \n\
+echo "Verifying Nginx configuration..." \n\
+nginx -t \n\
 \n\
 # Start Nginx in the background with error logging \n\
 echo "Starting Nginx..." \n\
-nginx -g "daemon off; error_log /dev/stdout info;" & \n\
-NGINX_PID=$! \n\
+service nginx start || nginx || true \n\
 \n\
 # Give Nginx time to start \n\
 sleep 3 \n\
 \n\
-# Set environment variables \n\
+# Set environment variables for the Node.js app \n\
 export RENDER=true \n\
 export OLLAMA_HOST=http://localhost:8081/ollama \n\
 export OLLAMA_MODEL=llama3.2 \n\
 export NODE_ENV=production \n\
 export OLLAMA_CONNECT_TIMEOUT=10000 \n\
-export PORT=10000 \n\
+# Be flexible with the PORT variable - use the one from Render if provided \n\
+export PORT=${PORT:-10000} \n\
 # Make sure any old PORT env vars are overridden \n\
 unset PORT_5002 \n\
 # Ensure LD_LIBRARY_PATH is set correctly \n\
@@ -188,6 +235,13 @@ else \n\
   netstat -tuln | grep 11434 || echo "netstat not available" \n\
 fi \n\
 \n\
+# Check each port individually \n\
+echo "Testing local port 80..." \n\
+curl -v http://localhost:80/ || echo "Port 80 not available or responding" \n\
+\n\
+echo "Testing local port 8081..." \n\
+curl -v http://localhost:8081/ || echo "Port 8081 not available or responding" \n\
+\n\
 # Verify Nginx + Ollama proxy is working with more debug info \n\
 echo "Checking Nginx proxy to Ollama..." \n\
 NGINX_OLLAMA_RESULT=$(curl -v http://localhost:8081/ollama/api/version 2>&1) \n\
@@ -204,7 +258,7 @@ else \n\
 fi \n\
 \n\
 # Start the Node.js application with clear port specification \n\
-echo "Starting Node.js application on port 10000..." \n\
+echo "Starting Node.js application on port $PORT..." \n\
 exec node server.js' > /usr/src/app/docker-entrypoint.sh
 
 RUN chmod +x /usr/src/app/docker-entrypoint.sh

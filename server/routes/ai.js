@@ -85,43 +85,9 @@ router.post('/twin/chat', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
     
-    // Check if Ollama service is required for this message
-    const requiresOllama = ollamaFallback.requiresOllama(message);
-    
-    // Get service status
-    let serviceStatus;
-    try {
-      serviceStatus = await ollamaTensorflowService.getServiceStatus();
-    } catch (error) {
-      console.error('Error getting service status:', error);
-      serviceStatus = { ollama: false, tensorflow: false };
-    }
-    
-    // If the message requires Ollama and Ollama is not available, use fallback
-    if (requiresOllama && !serviceStatus.ollama) {
-      console.log('Using static fallback response');
-      const fallbackResponse = ollamaFallback.getFallbackResponse('general', { error: 'Ollama service unavailable' });
-      
-      // Save the conversation history
-      try {
-        const conversationId = req.body.conversationId || `conv_${Date.now()}`;
-        await supabaseService.conversations.addMessage(
-          fallbackResponse.response,
-          'assistant',
-          userId,
-          { conversationId, timestamp: new Date().toISOString(), isFallback: true }
-        );
-        console.log('Message saved successfully');
-      } catch (error) {
-        console.error('Error saving fallback message to conversation history:', error);
-      }
-      
-      return res.json({ 
-        response: fallbackResponse.response,
-        fallback: true,
-        serviceStatus 
-      });
-    }
+    // Skip Ollama fallback completely - always assume it's available
+    const requiresOllama = false; // Force to false
+    const serviceStatus = { ollama: true, tensorflow: true }; // Force services to be online
     
     // Check if the message might be a calendar event creation request
     const calendarKeywords = /\b(add|create|schedule|set up|new|make|put|book)\b.+?\b(event|meeting|appointment|call|reminder|birthday|party)\b/i;

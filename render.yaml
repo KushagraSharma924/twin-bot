@@ -12,7 +12,7 @@ services:
       - key: RENDER
         value: "true"
       - key: OLLAMA_HOST
-        value: https://ollama-api.render.com
+        value: "false"
       - key: OLLAMA_MODEL
         value: llama3.2
       - key: OLLAMA_CONNECT_TIMEOUT

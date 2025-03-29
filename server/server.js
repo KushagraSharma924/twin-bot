@@ -17,6 +17,51 @@ import conversationRoutes from './routes/conversation.js';
 import researchRoutes from './routes/research.js';
 import userRoutes from './routes/user.js';
 
+// Function to check Supabase connectivity
+async function checkSupabaseConnection(retries = 3, delay = 2000) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      console.log(`Checking Supabase connection (attempt ${attempt}/${retries})...`);
+      const start = Date.now();
+      
+      // Simple ping to Supabase by trying to get settings from a table that should exist
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('count')
+        .limit(1)
+        .maybeSingle();
+      
+      const timeMs = Date.now() - start;
+      
+      if (error) {
+        console.error(`Supabase connection check failed (${timeMs}ms):`, error.message);
+        if (attempt < retries) {
+          console.log(`Retrying in ${delay/1000} seconds...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          // Increase delay for next attempts (exponential backoff)
+          delay *= 2;
+          continue;
+        }
+        return { success: false, error: error.message, timeMs };
+      }
+      
+      console.log(`Supabase connection successful (${timeMs}ms)`);
+      return { success: true, timeMs };
+    } catch (err) {
+      console.error(`Supabase connection check exception (attempt ${attempt}/${retries}):`, err.message);
+      if (attempt < retries) {
+        console.log(`Retrying in ${delay/1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        // Increase delay for next attempts (exponential backoff)
+        delay *= 2;
+        continue;
+      }
+      return { success: false, error: err.message };
+    }
+  }
+  return { success: false, error: 'All connection attempts failed' };
+}
+
 // Create Express app
 const app = express();
 const PORT = config.port;
@@ -44,7 +89,7 @@ const corsOptions = {
 
 // Apply CORS middleware
 app.use(cors(corsOptions));
-console.log(`CORS enabled for all origins`);
+console.log(`CORS enabled for all origins including localhost`);
 
 // Log all incoming requests in development
 if (process.env.NODE_ENV !== 'production') {
@@ -370,7 +415,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${config.env}`);
   
@@ -378,6 +423,16 @@ app.listen(PORT, () => {
   if (!supabase) {
     console.error('WARNING: Supabase client is not initialized. Authentication and database features will not work.');
     console.error('Make sure SUPABASE_URL and SUPABASE_KEY environment variables are set correctly.');
+  } else {
+    // Check Supabase connectivity
+    const connectionStatus = await checkSupabaseConnection();
+    if (!connectionStatus.success) {
+      console.error('WARNING: Supabase connection check failed. Some features might not work properly.');
+      console.error(`Error: ${connectionStatus.error}`);
+      console.log('The server will continue to run, and will retry connections as needed.');
+    } else {
+      console.log(`Supabase connection established successfully in ${connectionStatus.timeMs}ms`);
+    }
   }
   
   // Display available routes
