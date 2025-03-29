@@ -1,11 +1,11 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { storeGoogleToken } from '@/lib/api'
 import { Loader2 } from 'lucide-react'
 
-export default function AuthSuccessPage() {
+function AuthContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [error, setError] = useState<string | null>(null)
@@ -122,5 +122,22 @@ export default function AuthSuccessPage() {
         )}
       </div>
     </div>
+  )
+}
+
+// Main component with Suspense boundary for useSearchParams
+export default function AuthSuccessPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[var(--supabase-dark-bg)]">
+        <div className="bg-[var(--supabase-light-bg)] p-8 rounded-lg shadow-lg text-center max-w-md w-full">
+          <Loader2 className="h-12 w-12 animate-spin text-teal-500 mx-auto mb-4" />
+          <h1 className="text-2xl font-bold text-white mb-2">Loading...</h1>
+          <p className="text-gray-400 mb-4">Setting up authentication...</p>
+        </div>
+      </div>
+    }>
+      <AuthContent />
+    </Suspense>
   )
 } 
