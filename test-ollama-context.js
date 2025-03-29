@@ -6,7 +6,7 @@ import ollama from 'ollama';
 import readline from 'readline';
 
 // Configure Ollama
-const ollamaHost = 'http://localhost:11434';
+const ollamaHost = 'https://chatbot-x8x4.onrender.com';
 const ollamaModel = 'llama3.2';
 
 // Create readline interface for user input

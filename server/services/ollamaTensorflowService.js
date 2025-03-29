@@ -22,6 +22,7 @@ const LEARNING_RATE = parseFloat(process.env.LEARNING_RATE || '0.001');
 const MODELS_DIR = process.env.MODELS_DIR || './models/ollama-tf';
 const USER_EMBEDDINGS_FILE = 'user_embeddings.json';
 const ENABLE_TENSORFLOW_LEARNING = process.env.ENABLE_TENSORFLOW_LEARNING === 'true';
+const OLLAMA_CONNECT_TIMEOUT = parseInt(process.env.OLLAMA_CONNECT_TIMEOUT || '5000'); // 5 second timeout by default
 
 // Track service initialization status
 let isServiceInitialized = false;
@@ -57,11 +58,24 @@ async function initializeService() {
     
     // Verify Ollama is accessible
     try {
-      const ollamaCheck = await ollama.list({ host: OLLAMA_HOST });
+      console.log(`Checking Ollama service at ${OLLAMA_HOST}...`);
+
+      // Set up a timeout promise
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`Connection to Ollama timed out after ${OLLAMA_CONNECT_TIMEOUT}ms`)), OLLAMA_CONNECT_TIMEOUT);
+      });
+      
+      // Try to connect to Ollama with timeout
+      const ollamaPromise = ollama.list({ host: OLLAMA_HOST });
+      const ollamaCheck = await Promise.race([ollamaPromise, timeoutPromise]);
+      
       console.log('Ollama service is accessible');
     } catch (ollamaError) {
       console.warn(`Warning: Could not connect to Ollama service at ${OLLAMA_HOST}. Some features may not work.`);
       console.warn('Error details:', ollamaError.message);
+      
+      // Record the error but continue initialization
+      initializationError = new Error(`Ollama service unavailable: ${ollamaError.message}`);
     }
     
     // Ensure models directory exists
@@ -181,22 +195,66 @@ class OllamaTensorflowLearner {
    */
   async getEmbedding(text) {
     try {
-      const response = await ollama.embeddings({
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`Embedding request timed out after ${OLLAMA_CONNECT_TIMEOUT}ms`)), OLLAMA_CONNECT_TIMEOUT);
+      });
+      
+      const embeddingPromise = ollama.embeddings({
         model: OLLAMA_MODEL,
         prompt: text,
         host: OLLAMA_HOST
       });
       
+      // Race the embedding request against the timeout
+      const response = await Promise.race([embeddingPromise, timeoutPromise]);
+      
       return response.embedding;
     } catch (error) {
       console.error('Error getting embedding from Ollama:', error);
       
-      // Generate a fake embedding for fallback
-      const fallbackEmbedding = Array(EMBEDDING_DIM).fill(0).map(() => Math.random() * 0.01);
-      console.warn('Using fallback random embedding due to Ollama error');
+      // Generate a deterministic fallback embedding based on the text hash
+      // This will return the same embedding for the same text, providing some consistency
+      const fallbackEmbedding = this.generateDeterministicEmbedding(text);
+      console.warn('Using fallback deterministic embedding due to Ollama error');
       
       return fallbackEmbedding;
     }
+  }
+  
+  /**
+   * Generate a deterministic embedding from text using a simple hash function
+   * @param {string} text - Input text
+   * @returns {number[]} - Pseudo-embedding vector
+   */
+  generateDeterministicEmbedding(text) {
+    // Simple hash function to generate a number from a string
+    const hashCode = (str) => {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32bit integer
+      }
+      return hash;
+    };
+    
+    // Generate a seed from the text
+    const seed = hashCode(text);
+    
+    // Generate a deterministic array of numbers based on the seed
+    const embedding = [];
+    let value = seed;
+    
+    for (let i = 0; i < EMBEDDING_DIM; i++) {
+      // Generate next value in sequence using a simple LCG
+      value = (1664525 * value + 1013904223) % 4294967296;
+      // Scale to range [-0.1, 0.1]
+      embedding.push((value / 4294967296) * 0.2 - 0.1);
+    }
+    
+    // Normalize the vector to have unit length
+    const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
+    return embedding.map(val => val / magnitude);
   }
 
   /**
@@ -457,45 +515,88 @@ export async function getLearnerForUser(userId) {
 }
 
 /**
- * Check if the service is operational
- * @returns {Promise<Object>} - Status information
+ * Get service status information for health checks
+ * @returns {Promise<Object>} - Status object with operational information
  */
-export async function getServiceStatus() {
+async function getServiceStatus() {
+  const status = {
+    operational: isServiceInitialized,
+    tensorflow: true,
+    ollama: true,
+    error: null,
+    version: {
+      tensorflow: tf.version.tfjs,
+      ollama: 'unknown'
+    }
+  };
+  
   try {
     // Check TensorFlow
-    const tfStatus = {
-      available: true,
-      version: tf.version.tfjs
-    };
-    
-    // Check Ollama
-    let ollamaStatus = { available: false };
     try {
-      const models = await ollama.list({ host: OLLAMA_HOST });
-      ollamaStatus = {
-        available: true,
-        models: models.models?.map(m => m.name) || [],
-        host: OLLAMA_HOST
-      };
-    } catch (ollamaError) {
-      ollamaStatus = {
-        available: false,
-        error: ollamaError.message
-      };
+      // Create a small test tensor
+      const testTensor = tf.tensor1d([1, 2, 3]);
+      const result = testTensor.add(tf.tensor1d([4, 5, 6]));
+      const sum = result.dataSync().reduce((a, b) => a + b, 0);
+      
+      // Clean up tensors
+      testTensor.dispose();
+      result.dispose();
+      
+      // Tensor operations worked
+      status.tensorflow = true;
+    } catch (tfError) {
+      status.tensorflow = false;
+      status.error = `TensorFlow error: ${tfError.message}`;
     }
     
-    return {
-      operational: isServiceInitialized,
-      enabled: ENABLE_TENSORFLOW_LEARNING,
-      tensorflow: tfStatus,
-      ollama: ollamaStatus,
-      modelsDirectory: MODELS_DIR,
-      error: initializationError?.message
-    };
+    // Check Ollama with timeout
+    try {
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Ollama check timed out')), OLLAMA_CONNECT_TIMEOUT);
+      });
+      
+      const ollamaPromise = ollama.list({ host: OLLAMA_HOST });
+      
+      // Race against timeout
+      const ollamaResponse = await Promise.race([ollamaPromise, timeoutPromise]);
+      
+      // If we get here, Ollama is accessible
+      status.ollama = true;
+      
+      // Try to get the Ollama version
+      if (ollamaResponse && ollamaResponse.models && ollamaResponse.models.length > 0) {
+        status.version.ollama = ollamaResponse.models[0].name || 'available';
+      }
+    } catch (ollamaError) {
+      status.ollama = false;
+      
+      // Still consider service operational even if Ollama is down, just with limited functionality
+      status.operational = true;
+      
+      // Add error details
+      if (!status.error) {
+        status.error = `Ollama error: ${ollamaError.message}`;
+      } else {
+        status.error += ` | Ollama error: ${ollamaError.message}`;
+      }
+    }
+    
+    // Overall service is operational if TensorFlow is working,
+    // even if Ollama has issues (we can use fallback embeddings)
+    status.operational = status.tensorflow;
+    
+    return status;
   } catch (error) {
+    console.error('Error checking service status:', error);
     return {
       operational: false,
-      error: error.message
+      tensorflow: false,
+      ollama: false,
+      error: error.message,
+      version: {
+        tensorflow: tf.version.tfjs,
+        ollama: 'unknown'
+      }
     };
   }
 }

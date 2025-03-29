@@ -71,6 +71,57 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', version: process.env.npm_package_version || '1.0.0' });
 });
 
+// Enhanced health check with detailed service status
+app.get('/api/health/services', async (req, res) => {
+  try {
+    // Get status of all critical services
+    const services = {
+      server: { operational: true },
+      ollama: { operational: false, error: null },
+      tensorflow: { operational: false, error: null }
+    };
+    
+    // Check if Ollama connection is working
+    try {
+      // Dynamic import to avoid circular dependencies
+      const ollamaService = await import('./services/ollamaTensorflowService.js');
+      const status = await ollamaService.default.getServiceStatus();
+      
+      services.ollama.operational = status.ollama;
+      services.tensorflow.operational = status.tensorflow;
+      
+      if (!status.ollama && status.error) {
+        services.ollama.error = `Ollama service is not responding: ${status.error}`;
+      }
+      
+      if (!status.tensorflow && status.error) {
+        services.tensorflow.error = `TensorFlow is not operational: ${status.error}`;
+      }
+    } catch (error) {
+      console.error('Error checking services status:', error);
+      services.ollama.error = error.message;
+      services.tensorflow.error = error.message;
+    }
+    
+    // Overall app status
+    const allOperational = Object.values(services).every(service => service.operational);
+    
+    res.json({
+      status: allOperational ? 'ok' : 'degraded',
+      message: allOperational ? 'All services operational' : 'Some services are not fully operational',
+      services,
+      version: process.env.npm_package_version || '1.0.0',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'error',
+      message: 'Failed to check service health',
+      error: error.message
+    });
+  }
+});
+
 // Public TensorFlow status endpoint
 app.get('/api/health/tensorflow', async (req, res) => {
   try {
@@ -85,6 +136,47 @@ app.get('/api/health/tensorflow', async (req, res) => {
       error: error.message 
     });
   }
+});
+
+// Service unavailable error page with helpful info
+app.get('/service-unavailable', (req, res) => {
+  res.send(`
+    <html>
+      <head>
+        <title>Service Temporarily Unavailable</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; }
+          h1 { color: #e74c3c; }
+          .container { border: 1px solid #ddd; padding: 20px; border-radius: 5px; }
+          .error { background-color: #f9f2f4; padding: 10px; border-radius: 3px; font-family: monospace; }
+          .suggestions { margin-top: 20px; }
+          .suggestions li { margin-bottom: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Service Temporarily Unavailable</h1>
+          <p>We're sorry, but the AI service is currently experiencing technical difficulties.</p>
+          
+          <div class="error">
+            <strong>Error:</strong> Unable to connect to the Ollama service
+          </div>
+          
+          <div class="suggestions">
+            <h3>Possible solutions:</h3>
+            <ul>
+              <li>Try refreshing the page</li>
+              <li>Check if Ollama is properly deployed and running</li>
+              <li>Verify your API keys and connections if using alternative AI services</li>
+              <li>Contact support if the issue persists</li>
+            </ul>
+          </div>
+          
+          <p>Please check the <a href="/api/health/services">service status page</a> for more information.</p>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 // Apply auth middleware to protected routes
