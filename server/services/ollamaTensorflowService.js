@@ -10,6 +10,7 @@ import ollama from 'ollama';
 import fs from 'fs/promises';
 import path from 'path';
 import dotenv from 'dotenv';
+import { config } from '../config/index.js';
 
 // Load environment variables
 dotenv.config();
@@ -27,6 +28,14 @@ const OLLAMA_CONNECT_TIMEOUT = parseInt(process.env.OLLAMA_CONNECT_TIMEOUT || '5
 // Track service initialization status
 let isServiceInitialized = false;
 let initializationError = null;
+
+// Track service status
+let serviceStatus = {
+  ollama: false,
+  tensorflow: false,
+  lastChecked: null,
+  error: null
+};
 
 // Create models directory if it doesn't exist
 async function ensureModelsDirectory() {
@@ -515,91 +524,115 @@ export async function getLearnerForUser(userId) {
 }
 
 /**
- * Get service status information for health checks
- * @returns {Promise<Object>} - Status object with operational information
+ * Check if Ollama service is available
+ * @returns {Promise<boolean>} True if available
  */
-async function getServiceStatus() {
-  const status = {
-    operational: isServiceInitialized,
-    tensorflow: true,
-    ollama: true,
-    error: null,
-    version: {
-      tensorflow: tf.version.tfjs,
-      ollama: 'unknown'
-    }
-  };
-  
+async function checkOllamaService() {
   try {
-    // Check TensorFlow
-    try {
-      // Create a small test tensor
-      const testTensor = tf.tensor1d([1, 2, 3]);
-      const result = testTensor.add(tf.tensor1d([4, 5, 6]));
-      const sum = result.dataSync().reduce((a, b) => a + b, 0);
-      
-      // Clean up tensors
-      testTensor.dispose();
-      result.dispose();
-      
-      // Tensor operations worked
-      status.tensorflow = true;
-    } catch (tfError) {
-      status.tensorflow = false;
-      status.error = `TensorFlow error: ${tfError.message}`;
+    const ollamaHost = process.env.OLLAMA_HOST || 'https://ollama-api.render.com';
+    console.log(`Checking Ollama service at ${ollamaHost}...`);
+    
+    const response = await ollama.list({ host: ollamaHost });
+    
+    // If we received a response with models, the service is available
+    if (response && Array.isArray(response.models)) {
+      console.log(`Ollama service is available with ${response.models.length} models`);
+      return true;
     }
     
-    // Check Ollama with timeout
-    try {
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Ollama check timed out')), OLLAMA_CONNECT_TIMEOUT);
-      });
-      
-      const ollamaPromise = ollama.list({ host: OLLAMA_HOST });
-      
-      // Race against timeout
-      const ollamaResponse = await Promise.race([ollamaPromise, timeoutPromise]);
-      
-      // If we get here, Ollama is accessible
-      status.ollama = true;
-      
-      // Try to get the Ollama version
-      if (ollamaResponse && ollamaResponse.models && ollamaResponse.models.length > 0) {
-        status.version.ollama = ollamaResponse.models[0].name || 'available';
-      }
-    } catch (ollamaError) {
-      status.ollama = false;
-      
-      // Still consider service operational even if Ollama is down, just with limited functionality
-      status.operational = true;
-      
-      // Add error details
-      if (!status.error) {
-        status.error = `Ollama error: ${ollamaError.message}`;
-      } else {
-        status.error += ` | Ollama error: ${ollamaError.message}`;
-      }
-    }
-    
-    // Overall service is operational if TensorFlow is working,
-    // even if Ollama has issues (we can use fallback embeddings)
-    status.operational = status.tensorflow;
-    
-    return status;
+    console.log('Ollama service check failed: No models found');
+    return false;
   } catch (error) {
-    console.error('Error checking service status:', error);
-    return {
-      operational: false,
-      tensorflow: false,
-      ollama: false,
-      error: error.message,
-      version: {
-        tensorflow: tf.version.tfjs,
-        ollama: 'unknown'
-      }
-    };
+    console.error('Ollama service check failed:', error.message);
+    serviceStatus.error = `Ollama error: ${error.message}`;
+    return false;
   }
 }
+
+/**
+ * Check if TensorFlow service is available
+ * @returns {Promise<boolean>} True if available
+ */
+async function checkTensorflowService() {
+  try {
+    if (process.env.ENABLE_TENSORFLOW_LEARNING !== 'true') {
+      console.log('TensorFlow learning is disabled');
+      return false;
+    }
+    
+    // First check if the TensorFlow models directory exists
+    const modelsDir = process.env.MODELS_DIR || './models';
+    
+    if (!fs.existsSync(modelsDir)) {
+      console.log(`TensorFlow models directory not found: ${modelsDir}`);
+      return false;
+    }
+    
+    // Dynamically import TensorFlow.js (to avoid loading it unnecessarily)
+    try {
+      const tf = await import('@tensorflow/tfjs-node');
+      
+      // Simple TensorFlow operation to check if it's working
+      const tensor = tf.tensor1d([1, 2, 3]);
+      const result = tensor.add(tf.scalar(1));
+      const values = await result.array();
+      
+      tensor.dispose();
+      result.dispose();
+      
+      console.log('TensorFlow service is available');
+      return true;
+    } catch (tfError) {
+      console.error('TensorFlow initialization error:', tfError.message);
+      return false;
+    }
+  } catch (error) {
+    console.error('TensorFlow service check failed:', error.message);
+    return false;
+  }
+}
+
+/**
+ * Get the status of Ollama and TensorFlow services
+ * @returns {Promise<Object>} Service status
+ */
+export async function getServiceStatus() {
+  try {
+    // Only check services every 5 minutes to avoid excessive calls
+    const now = Date.now();
+    if (serviceStatus.lastChecked && now - serviceStatus.lastChecked < 5 * 60 * 1000) {
+      return serviceStatus;
+    }
+    
+    // Update service status
+    serviceStatus.ollama = await checkOllamaService();
+    serviceStatus.tensorflow = await checkTensorflowService();
+    serviceStatus.lastChecked = now;
+    
+    // Update the global config
+    if (config) {
+      config.serviceStatus = {
+        ollama: serviceStatus.ollama,
+        tensorflow: serviceStatus.tensorflow
+      };
+    }
+    
+    return serviceStatus;
+  } catch (error) {
+    console.error('Error checking service status:', error.message);
+    serviceStatus.error = error.message;
+    return serviceStatus;
+  }
+}
+
+// Initialize service status on module load
+getServiceStatus().then(status => {
+  console.log('Initial service status check completed:');
+  console.log(`- Ollama: ${status.ollama ? 'Available' : 'Unavailable'}`);
+  console.log(`- TensorFlow: ${status.tensorflow ? 'Available' : 'Unavailable'}`);
+}).catch(error => {
+  console.error('Error during initial service status check:', error);
+});
 
 /**
  * Get multiple enhanced responses from Ollama using TensorFlow model

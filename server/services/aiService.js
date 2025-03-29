@@ -8,13 +8,21 @@ dotenv.config();
 // Replace Google Gemini initialization with Ollama
 import ollama from 'ollama';
 
+// Import the fallback handler
+import ollamaFallback from '../fallbacks/ollama-fallback.js';
+
 // Configure Ollama
-const ollamaHost = process.env.OLLAMA_HOST || 'https://chatbot-x8x4.onrender.com';
+const ollamaHost = process.env.OLLAMA_HOST || 'https://ollama-api.render.com';
 const ollamaModel = process.env.OLLAMA_MODEL || 'llama3';
 
 // Add fallback configuration for OpenAI
 const openaiApiKey = process.env.OPENAI_API_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
+
+// Keep track of Ollama service status
+let ollamaServiceAvailable = false;
+let lastOllamaCheck = 0;
+const OLLAMA_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Process NLP tasks using Ollama
@@ -180,7 +188,9 @@ async function fallbackToGemini(content, task, chatHistory = []) {
  * @private
  */
 function generateStaticFallbackResponse(task, content) {
+  // Use our new fallback handler
   if (task === 'task_extraction') {
+    // For task extraction, we still need to return valid JSON
     return JSON.stringify([
       {
         "task": "Check system connectivity",
@@ -194,22 +204,28 @@ function generateStaticFallbackResponse(task, content) {
       }
     ]);
   } else if (task === 'calendar_event') {
+    // For calendar events, we still need to return valid JSON
     return JSON.stringify({
       "summary": "Check System Status",
       "description": "Verify that all AI services are operational",
       "location": "",
       "start": {
-        "dateTime": new Date(Date.now() + 3600000).toISOString(),
+        "dateTime": new Date(Date.now() + 3600000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
         "timeZone": Intl.DateTimeFormat().resolvedOptions().timeZone
       },
       "end": {
-        "dateTime": new Date(Date.now() + 7200000).toISOString(),
+        "dateTime": new Date(Date.now() + 7200000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
         "timeZone": Intl.DateTimeFormat().resolvedOptions().timeZone
       },
       "attendees": []
     });
   } else {
-    return `I apologize, but I'm currently experiencing technical difficulties connecting to my AI service. The system is trying to connect to an Ollama instance that isn't available. Please try again later or contact support for assistance.`;
+    // For general chat, use our fallback handler
+    const fallbackType = task === 'research' ? 'research' : 
+                         task === 'email' ? 'email' : 
+                         task === 'calendar' ? 'calendar' : 'general';
+    
+    return ollamaFallback.getFallbackResponse(fallbackType).response;
   }
 }
 

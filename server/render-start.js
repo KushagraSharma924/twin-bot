@@ -94,50 +94,57 @@ console.log(`📌 Ollama Connect Timeout: ${process.env.OLLAMA_CONNECT_TIMEOUT}m
 
 // Test the Ollama connection
 console.log('🔍 Testing Ollama connection...');
-fetch(`${ollamaHost}/api/version`, { 
-  timeout: parseInt(process.env.OLLAMA_CONNECT_TIMEOUT),
-  headers: { 'Content-Type': 'application/json' }
-})
-  .then(response => {
-    if (response.ok) {
-      console.log('✅ Ollama is accessible through the Nginx proxy!');
-      return response.json();
-    } else {
-      throw new Error(`Status code: ${response.status}`);
-    }
+// Skip the connection test if using an external service
+if (ollamaHost && (ollamaHost.includes('localhost') || ollamaHost.includes('127.0.0.1'))) {
+  fetch(`${ollamaHost}/api/version`, { 
+    timeout: parseInt(process.env.OLLAMA_CONNECT_TIMEOUT),
+    headers: { 'Content-Type': 'application/json' }
   })
-  .then(data => {
-    if (data && data.version) {
-      console.log(`   Ollama version: ${data.version}`);
-    } else {
-      console.log('   Ollama version information not available');
-    }
-  })
-  .catch(error => {
-    console.warn(`⚠️ Ollama connection test failed: ${error.message}`);
-    console.warn('   The application will use fallback providers or static responses.');
-    
-    // Try to check if Ollama is running directly
-    try {
-      console.log('Checking if Ollama is running directly on port 11434...');
-      fetch('http://localhost:11434/api/version', { 
-        timeout: parseInt(process.env.OLLAMA_CONNECT_TIMEOUT) 
-      })
-        .then(response => {
-          if (response.ok) {
-            console.log('✅ Ollama is running directly on port 11434');
-            console.log('   This suggests a proxy configuration issue');
-          } else {
-            console.warn('⚠️ Ollama is not accessible directly either');
-          }
+    .then(response => {
+      if (response.ok) {
+        console.log('✅ Ollama is accessible through the Nginx proxy!');
+        return response.json();
+      } else {
+        throw new Error(`Status code: ${response.status}`);
+      }
+    })
+    .then(data => {
+      if (data && data.version) {
+        console.log(`   Ollama version: ${data.version}`);
+      } else {
+        console.log('   Ollama version information not available');
+      }
+    })
+    .catch(error => {
+      console.warn(`⚠️ Ollama connection test failed: ${error.message}`);
+      console.warn('   The application will use fallback providers or static responses.');
+      
+      // Try to check if Ollama is running directly
+      try {
+        console.log('Checking if Ollama is running directly on port 11434...');
+        fetch('http://localhost:11434/api/version', { 
+          timeout: parseInt(process.env.OLLAMA_CONNECT_TIMEOUT) 
         })
-        .catch(err => {
-          console.warn('⚠️ Ollama is not accessible directly:', err.message);
-        });
-    } catch (error) {
-      console.warn('⚠️ Failed to check direct Ollama access:', error.message);
-    }
-  });
+          .then(response => {
+            if (response.ok) {
+              console.log('✅ Ollama is running directly on port 11434');
+              console.log('   This suggests a proxy configuration issue');
+            } else {
+              console.warn('⚠️ Ollama is not accessible directly either');
+            }
+          })
+          .catch(err => {
+            console.warn('⚠️ Ollama is not accessible directly:', err.message);
+          });
+      } catch (error) {
+        console.warn('⚠️ Failed to check direct Ollama access:', error.message);
+      }
+    });
+} else {
+  console.log(`⚠️ Skipping Ollama connection test for external service: ${ollamaHost}`);
+  console.log('   The application will attempt to connect to this service during runtime.');
+  console.log('   If unavailable, fallback providers or static responses will be used.');
+}
 
 // Proceed with importing the server
 console.log('📦 Loading main server application...');

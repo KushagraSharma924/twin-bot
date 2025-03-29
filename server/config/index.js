@@ -48,6 +48,12 @@ export const config = {
   yahoo: {
     clientId: process.env.YAHOO_CLIENT_ID,
     clientSecret: process.env.YAHOO_CLIENT_SECRET
+  },
+
+  // Service status tracking
+  serviceStatus: {
+    ollama: false,
+    tensorflow: false
   }
 };
 

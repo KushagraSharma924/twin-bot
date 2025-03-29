@@ -5,6 +5,7 @@ import * as supabaseService from '../services/supabaseService.js';
 import * as embeddingService from '../services/embeddingService.js';
 import conversationService from '../services/conversationService.js';
 import ollamaTensorflowService from '../services/ollamaTensorflowService.js';
+import ollamaFallback from '../fallbacks/ollama-fallback.js';
 
 const router = express.Router();
 
@@ -82,6 +83,44 @@ router.post('/twin/chat', async (req, res) => {
     
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
+    }
+    
+    // Check if Ollama service is required for this message
+    const requiresOllama = ollamaFallback.requiresOllama(message);
+    
+    // Get service status
+    let serviceStatus;
+    try {
+      serviceStatus = await ollamaTensorflowService.getServiceStatus();
+    } catch (error) {
+      console.error('Error getting service status:', error);
+      serviceStatus = { ollama: false, tensorflow: false };
+    }
+    
+    // If the message requires Ollama and Ollama is not available, use fallback
+    if (requiresOllama && !serviceStatus.ollama) {
+      console.log('Using static fallback response');
+      const fallbackResponse = ollamaFallback.getFallbackResponse('general', { error: 'Ollama service unavailable' });
+      
+      // Save the conversation history
+      try {
+        const conversationId = req.body.conversationId || `conv_${Date.now()}`;
+        await supabaseService.conversations.addMessage(
+          fallbackResponse.response,
+          'assistant',
+          userId,
+          { conversationId, timestamp: new Date().toISOString(), isFallback: true }
+        );
+        console.log('Message saved successfully');
+      } catch (error) {
+        console.error('Error saving fallback message to conversation history:', error);
+      }
+      
+      return res.json({ 
+        response: fallbackResponse.response,
+        fallback: true,
+        serviceStatus 
+      });
     }
     
     // Check if the message might be a calendar event creation request
