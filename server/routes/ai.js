@@ -3,6 +3,8 @@ import * as aiService from '../services/aiService.js';
 import * as calendarService from '../services/calendarService.js';
 import * as supabaseService from '../services/supabaseService.js';
 import * as embeddingService from '../services/embeddingService.js';
+import conversationService from '../services/conversationService.js';
+import ollamaTensorflowService from '../services/ollamaTensorflowService.js';
 
 const router = express.Router();
 
@@ -116,13 +118,24 @@ router.post('/twin/chat', async (req, res) => {
             const result = await aiService.addEventToCalendar(eventDetails, googleToken);
             
             if (result && result.success) {
-              // Response with both calendar confirmation and chat output
-              const aiResponse = await aiService.processNLPTask(message);
+              // Get or create conversation for this user
+              const conversation = conversationService.getOrCreateConversation(userId, conversationId);
+
+              // Add user message to conversation history
+              conversationService.addMessage(conversation.id, 'user', message);
+              
+              // Process the message with Ollama
+              const ollamaMessages = conversationService.getMessagesForOllama(conversation.id);
+              const aiResponse = await aiService.processNLPTask(message, 'general', ollamaMessages);
+              
+              // Add AI response to conversation history
+              conversationService.addMessage(conversation.id, 'assistant', aiResponse);
               
               return res.json({ 
                 response: `${aiResponse}\n\nEvent "${eventDetails.eventName}" has been added to your calendar on ${eventDetails.eventDate}.`,
                 calendarEvent: result.event,
-                eventDetails: eventDetails
+                eventDetails: eventDetails,
+                conversationId: conversation.id
               });
             }
           }
@@ -135,54 +148,27 @@ router.post('/twin/chat', async (req, res) => {
       }
     }
     
-    // Fetch chat history from Supabase for context
-    let chatHistory = [];
-    try {
-      // Import supabaseService here to avoid circular dependencies
-      const { supabase } = await import('../config/index.js');
-      
-      // Get the conversation history limit from config or use default of 10 messages
-      const historyLimit = process.env.CHAT_HISTORY_LIMIT || 10;
-      
-      // Query to get recent messages for this conversation
-      const query = supabase
-        .from('conversations')
-        .select('*')
-        .eq('user_id', userId);
-      
-      // Add conversation filter if provided
-      if (conversationId) {
-        query.eq('conversation_id', conversationId);
-      }
-      
-      // Execute the query with limits and ordering
-      const { data, error } = await query
-        .order('timestamp', { ascending: false })
-        .limit(parseInt(historyLimit));
-        
-      if (error) {
-        console.error('Error fetching chat history:', error);
-      } else if (data && data.length > 0) {
-        console.log(`Successfully fetched ${data.length} previous messages for context`);
-        
-        // Format the messages for Gemini
-        chatHistory = data
-          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-          .map(msg => ({
-            role: msg.source === 'user' ? 'user' : 'assistant',
-            content: msg.message
-          }));
-      }
-    } catch (historyError) {
-      console.error('Error getting chat history:', historyError);
-      // Continue without history if there's an error
-    }
+    // Get or create conversation for this user
+    const conversation = conversationService.getOrCreateConversation(userId, conversationId);
+    console.log(`Using conversation with ID: ${conversation.id} (${conversation.messages.length} messages in history)`);
     
-    // Process the message using the AI service (normal chat flow)
-    // Pass the chat history to the processNLPTask function
-    const response = await aiService.processNLPTask(message, 'general', chatHistory);
+    // Add user message to conversation history
+    conversationService.addMessage(conversation.id, 'user', message);
+
+    // Get formatted messages for Ollama
+    const ollamaMessages = conversationService.getMessagesForOllama(conversation.id);
     
-    res.json({ response });
+    // Process the message using the AI service with conversation history
+    const response = await aiService.processNLPTask(message, 'general', ollamaMessages);
+    
+    // Add AI response to conversation history
+    conversationService.addMessage(conversation.id, 'assistant', response);
+    
+    res.json({ 
+      response, 
+      conversationId: conversation.id,
+      messageCount: conversation.messages.length
+    });
   } catch (error) {
     console.error('Chat processing error:', error);
     res.status(500).json({ error: error.message });
@@ -419,77 +405,248 @@ router.post('/twin/simple-calendar-event', async (req, res) => {
   }
 });
 
-// Extract user interests from the current message
-let newInterests = [];
-try {
-  newInterests = await aiService.extractUserInterests(message);
-  console.log('Extracted interests from message:', newInterests);
-} catch (interestsError) {
-  console.error('Error extracting interests:', interestsError);
-  // Continue without extracted interests
-}
-
-// Get existing user interests from Supabase
-let userInterests = [];
-try {
-  const interestsResult = await supabaseService.default.userInterests.getInterests(userId);
-  if (interestsResult.success && interestsResult.interests) {
-    userInterests = interestsResult.interests;
-    console.log('Retrieved existing user interests:', userInterests);
-  }
-} catch (getInterestsError) {
-  console.error('Error getting user interests:', getInterestsError);
-  // Continue with empty interests
-}
-
-// Combine existing and new interests, removing duplicates
-if (newInterests.length > 0) {
+/**
+ * List all conversations for a user
+ * GET /api/twin/conversations/:userId
+ */
+router.get('/twin/conversations/:userId', async (req, res) => {
   try {
-    // Create a Set to remove duplicates (case insensitive)
-    const interestsSet = new Set([
-      ...userInterests.map(i => i.toLowerCase()),
-      ...newInterests.map(i => i.toLowerCase())
-    ]);
+    const { userId } = req.params;
     
-    // Convert back to array and limit to 20 most recent interests
-    const combinedInterests = Array.from(interestsSet).slice(0, 20);
-    
-    // Only update if we have new interests
-    if (combinedInterests.length > userInterests.length) {
-      console.log('Updating user interests with new combination:', combinedInterests);
-      
-      try {
-        // Generate embedding for interests
-        const embedding = await embeddingService.default.getInterestsEmbedding(combinedInterests);
-        
-        // Store updated interests and embedding
-        if (embedding) {
-          await supabaseService.default.userInterests.storeInterests(userId, combinedInterests, embedding);
-        } else {
-          // If embedding fails, still store the interests without embedding
-          await supabaseService.default.userInterests.storeInterests(userId, combinedInterests, null);
-          console.warn('Stored interests without embedding due to embedding generation failure');
-        }
-        
-        // Update the userInterests array for this request
-        userInterests = combinedInterests;
-      } catch (embeddingError) {
-        console.error('Error with embedding generation or storage:', embeddingError);
-        // Store interests without embedding as fallback
-        try {
-          await supabaseService.default.userInterests.storeInterests(userId, combinedInterests, null);
-          console.warn('Stored interests without embedding after embedding error');
-          userInterests = combinedInterests;
-        } catch (fallbackError) {
-          console.error('Fallback interest storage also failed:', fallbackError);
-          // Keep using existing interests
-        }
-      }
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
     }
-  } catch (updateInterestsError) {
-    console.error('Error updating user interests:', updateInterestsError);
-    // Continue with existing interests
+    
+    const conversations = conversationService.getUserConversations(userId);
+    
+    res.json({ conversations });
+  } catch (error) {
+    console.error('Error fetching conversations:', error);
+    res.status(500).json({ error: error.message });
   }
-}
+});
+
+/**
+ * Create a new conversation for a user
+ * POST /api/twin/conversations/:userId
+ */
+router.post('/twin/conversations/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+    
+    const conversation = conversationService.getOrCreateConversation(userId);
+    
+    res.json({ 
+      conversationId: conversation.id,
+      createdAt: conversation.createdAt 
+    });
+  } catch (error) {
+    console.error('Error creating conversation:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Delete a conversation
+ * DELETE /api/twin/conversations/:conversationId
+ */
+router.delete('/twin/conversations/:conversationId', async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    
+    if (!conversationId) {
+      return res.status(400).json({ error: 'Conversation ID is required' });
+    }
+    
+    const success = conversationService.deleteConversation(conversationId);
+    
+    if (!success) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    
+    res.json({ success: true, message: 'Conversation deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting conversation:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Clear all expired conversations (admin/maintenance endpoint)
+ * POST /api/twin/conversations/maintenance/clear-expired
+ */
+router.post('/twin/conversations/maintenance/clear-expired', async (req, res) => {
+  try {
+    // This could be protected with an admin check in a real application
+    const clearedCount = conversationService.clearExpiredConversations();
+    
+    res.json({ 
+      success: true, 
+      clearedCount,
+      message: `Cleared ${clearedCount} expired conversations` 
+    });
+  } catch (error) {
+    console.error('Error clearing expired conversations:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Enhanced Ollama chat with TensorFlow learning
+ * POST /api/twin/enhanced-chat
+ */
+router.post('/twin/enhanced-chat', async (req, res) => {
+  try {
+    const { message, userId, conversationId } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+    
+    console.log(`Processing enhanced chat request for user ${userId}`);
+    
+    // Get or create conversation for this user
+    const conversation = conversationService.getOrCreateConversation(userId, conversationId);
+    
+    // Add user message to conversation history
+    conversationService.addMessage(conversation.id, 'user', message);
+    
+    // Get enhanced response using TensorFlow model
+    const enhancedResponse = await ollamaTensorflowService.getEnhancedResponse(userId, message);
+    
+    // Extract the content from the enhanced response
+    const responseContent = enhancedResponse.content || enhancedResponse;
+    
+    // Add AI response to conversation history
+    conversationService.addMessage(conversation.id, 'assistant', responseContent);
+    
+    res.json({
+      response: responseContent,
+      conversationId: conversation.id,
+      enhanced: true,
+      relevanceScore: enhancedResponse.relevanceScore
+    });
+  } catch (error) {
+    console.error('Enhanced chat error:', error);
+    
+    // Fallback to standard chat if enhanced chat fails
+    try {
+      const { message, userId, conversationId } = req.body;
+      const conversation = conversationService.getOrCreateConversation(userId, conversationId);
+      const ollamaMessages = conversationService.getMessagesForOllama(conversation.id);
+      const response = await aiService.processNLPTask(message, 'general', ollamaMessages);
+      conversationService.addMessage(conversation.id, 'assistant', response);
+      
+      res.json({
+        response,
+        conversationId: conversation.id,
+        enhanced: false,
+        fallback: true
+      });
+    } catch (fallbackError) {
+      console.error('Fallback chat error:', fallbackError);
+      res.status(500).json({ error: error.message });
+    }
+  }
+});
+
+/**
+ * Submit feedback on AI responses for learning
+ * POST /api/twin/feedback
+ */
+router.post('/twin/feedback', async (req, res) => {
+  try {
+    const { userId, conversationId, messageId, feedback, message, response } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+    
+    if (feedback === undefined || feedback < 0 || feedback > 1) {
+      return res.status(400).json({ 
+        error: 'Feedback score is required and must be between 0 and 1' 
+      });
+    }
+    
+    console.log(`Recording feedback for user ${userId}: ${feedback}`);
+    
+    // Create a training sample from this interaction
+    const interaction = {
+      message: message,
+      response: response,
+      positive_feedback: feedback,
+      timestamp: Date.now()
+    };
+    
+    // Train the model with this feedback
+    const result = await ollamaTensorflowService.trainWithFeedback(userId, [interaction]);
+    
+    res.json({
+      success: true,
+      message: 'Feedback recorded successfully',
+      trainingResult: result
+    });
+  } catch (error) {
+    console.error('Feedback processing error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Batch train the Ollama TensorFlow model with historical data
+ * POST /api/twin/batch-train
+ */
+router.post('/twin/batch-train', async (req, res) => {
+  try {
+    const { userId, interactions } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+    
+    if (!interactions || !Array.isArray(interactions) || interactions.length === 0) {
+      return res.status(400).json({ error: 'Interactions array is required' });
+    }
+    
+    console.log(`Batch training for user ${userId} with ${interactions.length} interactions`);
+    
+    // Train the model with all provided interactions
+    const result = await ollamaTensorflowService.trainWithFeedback(userId, interactions);
+    
+    res.json({
+      success: true,
+      message: `Model trained with ${interactions.length} interactions`,
+      result
+    });
+  } catch (error) {
+    console.error('Batch training error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Check TensorFlow learning service health
+ * GET /api/twin/tensorflow/status
+ */
+router.get('/twin/tensorflow/status', async (req, res) => {
+  try {
+    const status = await ollamaTensorflowService.getServiceStatus();
+    res.json(status);
+  } catch (error) {
+    console.error('Error checking TensorFlow service status:', error);
+    res.status(500).json({ 
+      operational: false,
+      error: error.message 
+    });
+  }
+});
 
 export default router; 

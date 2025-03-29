@@ -16,13 +16,15 @@ const ollamaModel = process.env.OLLAMA_MODEL || 'llama3';
  * Process NLP tasks using Ollama
  * @param {string} content - The content to process
  * @param {string} task - The type of task (general, task_extraction, or calendar_event)
+ * @param {Array} chatHistory - Previous chat messages for context retention
  * @returns {Promise<string>} - The processed response
  */
-export async function processNLPTask(content, task = 'general') {
+export async function processNLPTask(content, task = 'general', chatHistory = []) {
   try {
     console.log('Ollama configuration:');
     console.log('- Model:', ollamaModel);
     console.log('- Task:', task);
+    console.log('- Chat history length:', chatHistory.length);
 
     let systemPrompt = "You are an AI digital twin assistant. Be concise.";
     
@@ -50,16 +52,29 @@ Extract any mentioned attendees by their email addresses.
 Return only the raw JSON without markdown formatting or code blocks.`;
     }
     
-    console.log('Making API call to Ollama...');
+    console.log('Making API call to Ollama with context retention...');
     
-    // Generate content with Ollama
+    // Prepare messages array with system prompt and chat history
+    const messages = [
+      { role: 'system', content: systemPrompt }
+    ];
+    
+    // Add chat history to messages for context retention
+    if (chatHistory && chatHistory.length > 0) {
+      messages.push(...chatHistory);
+    }
+    
+    // Add the current user message
+    messages.push({ role: 'user', content: content });
+    
+    // Generate content with Ollama using context retention
     const response = await ollama.chat({
       model: ollamaModel,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: content }
-      ],
-      host: ollamaHost
+      messages: messages,
+      host: ollamaHost,
+      options: {
+        num_ctx: 4096  // Increase context window to retain more history
+      }
     });
     
     let responseText = response.message.content;
@@ -104,9 +119,10 @@ Return only the raw JSON without markdown formatting or code blocks.`;
  * @param {string} content - The content to process
  * @param {Function} callback - Callback for streaming chunks
  * @param {string} task - The type of task
+ * @param {Array} chatHistory - Previous chat messages for context retention
  * @returns {Promise<string>} - The complete response
  */
-export async function processNLPTaskStreaming(content, callback, task = 'general') {
+export async function processNLPTaskStreaming(content, callback, task = 'general', chatHistory = []) {
   try {
     let systemPrompt = "You are an AI digital twin assistant. Be concise.";
     
@@ -116,17 +132,31 @@ export async function processNLPTaskStreaming(content, callback, task = 'general
       systemPrompt = "Create a calendar event from this request. Be concise.";
     }
     
-    console.log('Making streaming API call to Ollama...');
+    console.log('Making streaming API call to Ollama with context retention...');
+    console.log('- Chat history length:', chatHistory.length);
     
-    // Generate content with streaming
+    // Prepare messages array with system prompt and chat history
+    const messages = [
+      { role: 'system', content: systemPrompt }
+    ];
+    
+    // Add chat history to messages for context retention
+    if (chatHistory && chatHistory.length > 0) {
+      messages.push(...chatHistory);
+    }
+    
+    // Add the current user message
+    messages.push({ role: 'user', content: content });
+    
+    // Generate content with streaming using context retention
     const stream = await ollama.chat({
       model: ollamaModel,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: content }
-      ],
+      messages: messages,
       stream: true,
-      host: ollamaHost
+      host: ollamaHost,
+      options: {
+        num_ctx: 4096  // Increase context window to retain more history
+      }
     });
     
     let fullResponse = '';

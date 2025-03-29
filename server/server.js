@@ -65,6 +65,27 @@ app.use(express.json());
 // Static files
 app.use(express.static('public'));
 
+// Public health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', version: process.env.npm_package_version || '1.0.0' });
+});
+
+// Public TensorFlow status endpoint
+app.get('/api/health/tensorflow', async (req, res) => {
+  try {
+    // Dynamic import to avoid circular dependencies
+    const ollamaTensorflowService = await import('./services/ollamaTensorflowService.js');
+    const status = await ollamaTensorflowService.default.getServiceStatus();
+    res.json(status);
+  } catch (error) {
+    console.error('Error checking TensorFlow service status:', error);
+    res.status(500).json({ 
+      operational: false,
+      error: error.message 
+    });
+  }
+});
+
 // Apply auth middleware to protected routes
 app.use('/api/auth', authRoutes);
 app.use('/api/email', emailMiddleware, emailRoutes);
@@ -81,11 +102,6 @@ app.use('/api/twin', authMiddleware, (req, res, next) => {
 app.use('/api/browser', authMiddleware);
 app.use('/api/user', authMiddleware);
 app.use('/api/admin', adminMiddleware);
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', version: process.env.npm_package_version || '1.0.0' });
-});
 
 // Calendar API: Create event
 app.post('/api/calendar/create-event', authMiddleware, async (req, res) => {
