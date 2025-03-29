@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: chatbot
+    env: docker
+    region: ohio
+    plan: standard
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerCommand: /usr/src/app/docker-entrypoint.sh
+    envVars:
+      - key: RENDER
+        value: "true"
+      - key: OLLAMA_HOST
+        value: http://localhost:8081/ollama
+      - key: OLLAMA_MODEL
+        value: llama3.2
+      - key: OLLAMA_CONNECT_TIMEOUT
+        value: "10000"
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /health

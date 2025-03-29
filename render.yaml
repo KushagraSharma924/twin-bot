@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: chatbot
+    region: ohio
+    runtime: node
+    plan: standard
+    buildCommand: cd server && npm install && chmod +x start-ollama-nginx.sh
+    startCommand: cd server && ./start-ollama-nginx.sh && node render-start.js
+    envVars:
+      - key: NODE_VERSION
+        value: 20.8.1
+      - key: RENDER
+        value: "true"
+      - key: OLLAMA_HOST
+        value: http://localhost:8081/ollama
+      - key: OLLAMA_MODEL
+        value: llama3.2
+      - key: OLLAMA_CONNECT_TIMEOUT
+        value: "10000"
+      - key: NODE_ENV
+        value: production
+      - key: EMBEDDING_DIM
+        value: "384"
+      - key: LEARNING_RATE
+        value: "0.001"
+      - key: MODELS_DIR
+        value: ./models/ollama-tf
+      - key: ENABLE_TENSORFLOW_LEARNING
+        value: "true"
+      - key: PORT
+        value: "10000"
+      - key: API_TIMEOUT
+        value: "30000"
+    healthCheckPath: /health
+    autoDeploy: true 
