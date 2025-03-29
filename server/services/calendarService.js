@@ -5,7 +5,7 @@ dotenv.config();
 
 // Google Calendar API setup
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
-const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5002/api/auth/google/callback';
+const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'https://chatbot-x8x4.onrender.com/api/auth/google/callback';
 
 /**
  * Create OAuth2 client for Google Calendar API

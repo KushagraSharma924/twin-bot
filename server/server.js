@@ -15,6 +15,7 @@ import aiRoutes from './routes/ai.js';
 import calendarRoutes from './routes/calendar.js';
 import conversationRoutes from './routes/conversation.js';
 import researchRoutes from './routes/research.js';
+import userRoutes from './routes/user.js';
 
 // Create Express app
 const app = express();
@@ -33,7 +34,7 @@ app.use((req, res, next) => {
 
 // CORS Configuration
 const corsOptions = {
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: '*', // Allow all origins 
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Google-Token'],
   credentials: true,
@@ -43,7 +44,7 @@ const corsOptions = {
 
 // Apply CORS middleware
 app.use(cors(corsOptions));
-console.log(`CORS enabled for origin: ${corsOptions.origin}`);
+console.log(`CORS enabled for all origins`);
 
 // Log all incoming requests in development
 if (process.env.NODE_ENV !== 'production') {
@@ -93,6 +94,7 @@ app.use('/api/ai', authMiddleware, aiRoutes);
 app.use('/api/calendar', authMiddleware, calendarRoutes);
 app.use('/api/conversations', authMiddleware, conversationRoutes);
 app.use('/api/research', authMiddleware, researchRoutes);
+app.use('/api/user', authMiddleware, userRoutes);
 // Use the AI routes for twin functionality
 app.use('/api/twin', authMiddleware, (req, res, next) => {
   // Rewrite the URL path to use our AI endpoints
@@ -100,7 +102,6 @@ app.use('/api/twin', authMiddleware, (req, res, next) => {
   next();
 }, aiRoutes);
 app.use('/api/browser', authMiddleware);
-app.use('/api/user', authMiddleware);
 app.use('/api/admin', adminMiddleware);
 
 // Calendar API: Create event

@@ -1,7 +1,7 @@
 // Ensure API_URL always includes /api prefix
 export const API_URL = typeof window !== 'undefined' 
-  ? (window.location.hostname === 'localhost' ? 'http://localhost:5002/api' : `${window.location.origin}/api`)
-  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api');
+  ? (window.location.hostname === 'localhost' ? 'https://chatbot-x8x4.onrender.com/api' : `${window.location.origin}/api`)
+  : (process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-x8x4.onrender.com/api');
 
 /**
  * Interface for research document type

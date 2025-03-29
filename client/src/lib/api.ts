@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-x8x4.onrender.com';
 
 export interface LoginResponse {
   user: {

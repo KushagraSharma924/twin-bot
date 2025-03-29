@@ -1057,7 +1057,7 @@ export default function TwinBotChatPage() {
         throw new Error('Authentication token not found')
       }
       
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002'
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-x8x4.onrender.com'
       console.log(`Deleting conversation ${chatId} via API: ${API_URL}/api/conversations/delete`)
       
       // Make the delete request to the server
@@ -1391,7 +1391,7 @@ export default function TwinBotChatPage() {
       const session = JSON.parse(localStorage.getItem('session') || '{}');
       const token = session.access_token;
       
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002'}/api/calendar/create-event`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-x8x4.onrender.com'}/api/calendar/create-event`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -160,7 +160,7 @@ const AIResearchIntegration = ({ onResearchStart, onResearchComplete, isAuthenti
       let topics: string[] = [];
       
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api'}/ai/gemini`, {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-x8x4.onrender.com/api'}/ai/gemini`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -383,7 +383,7 @@ const AIResearchIntegration = ({ onResearchStart, onResearchComplete, isAuthenti
       
       if (!token) return;
       
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002'}/api/research/history`, {
+      await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://chatbot-x8x4.onrender.com'}/api/research/history`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

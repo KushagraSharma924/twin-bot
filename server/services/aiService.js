@@ -9,7 +9,7 @@ dotenv.config();
 import ollama from 'ollama';
 
 // Configure Ollama
-const ollamaHost = process.env.OLLAMA_HOST || 'http://localhost:11434';
+const ollamaHost = process.env.OLLAMA_HOST || 'https://chatbot-x8x4.onrender.com/ollama';
 const ollamaModel = process.env.OLLAMA_MODEL || 'llama3';
 
 /**
@@ -227,7 +227,7 @@ function parseNaturalLanguageDate(text) {
   
   if (lowerText.includes('next week')) {
     const nextWeek = new Date(today);
-    nextWeek.setDate(nextWeek.getDate() + 7);
+    nextWeek.setDate(today.getDate() + 7);
     return nextWeek.toISOString().split('T')[0];
   }
   
