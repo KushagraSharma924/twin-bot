@@ -45,7 +45,11 @@ services:
         value: "10000"
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: "10000"
     healthCheckPath: /health
+    # Explicitly set the IP binding to avoid issues
+    autoDeploy: false
 EOF
 
 echo -e "${GREEN}Render deployment files created in ${RENDER_DIR} directory${NC}"

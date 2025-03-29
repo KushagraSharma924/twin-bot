@@ -64,11 +64,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     curl \
     procps \
+    net-tools \
+    iproute2 \
+    iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy built node modules and app files from the builder stage
 COPY --from=builder /usr/src/app .
 COPY --from=builder /usr/local/ollama /usr/local/ollama
+
+# Ensure Ollama directory is set up properly
+RUN mkdir -p /root/.ollama && \
+    chmod -R 755 /usr/local/ollama && \
+    chmod -R 755 /root/.ollama
 
 # Create Nginx configuration for Ollama proxy
 RUN mkdir -p /etc/nginx/conf.d
@@ -77,7 +85,7 @@ RUN chmod +x /usr/src/app/start-ollama-nginx.sh
 
 # Create Nginx configuration file
 RUN echo 'server { \
-    listen 8081; \
+    listen 0.0.0.0:8081; \
     server_name localhost; \
 \
     # Allow large uploads \
@@ -108,7 +116,7 @@ RUN echo 'server { \
         rewrite ^/ollama/(.*) /$1 break; \
 \
         # Forward requests to Ollama \
-        proxy_pass http://localhost:11434/; \
+        proxy_pass http://127.0.0.1:11434/; \
         proxy_http_version 1.1; \
         proxy_set_header Host $host; \
         proxy_set_header X-Real-IP $remote_addr; \
@@ -130,18 +138,27 @@ RUN echo 'server { \
 RUN echo '#!/bin/bash \n\
 set -e \n\
 \n\
-# Start Ollama in the background \n\
+# Debug any IP address issues \n\
+echo "Network interfaces:" \n\
+ip addr show || hostname -I || echo "IP tools not available" \n\
+\n\
+# Start Ollama in the background with more debugging \n\
 echo "Starting Ollama..." \n\
-/usr/local/ollama/ollama serve & \n\
+mkdir -p /root/.ollama \n\
+/usr/local/ollama/ollama serve > /tmp/ollama.log 2>&1 & \n\
 OLLAMA_PID=$! \n\
 \n\
 # Give Ollama time to start \n\
-sleep 3 \n\
+echo "Waiting for Ollama to initialize (10 seconds)..." \n\
+sleep 10 \n\
 \n\
-# Start Nginx in the background \n\
+# Start Nginx in the background with error logging \n\
 echo "Starting Nginx..." \n\
-nginx \n\
+nginx -g "daemon off; error_log /dev/stdout info;" & \n\
 NGINX_PID=$! \n\
+\n\
+# Give Nginx time to start \n\
+sleep 3 \n\
 \n\
 # Set environment variables \n\
 export RENDER=true \n\
@@ -150,26 +167,44 @@ export OLLAMA_MODEL=llama3.2 \n\
 export NODE_ENV=production \n\
 export OLLAMA_CONNECT_TIMEOUT=10000 \n\
 export PORT=10000 \n\
+# Make sure any old PORT env vars are overridden \n\
+unset PORT_5002 \n\
+# Ensure LD_LIBRARY_PATH is set correctly \n\
 export LD_LIBRARY_PATH=/usr/src/app/node_modules/@tensorflow/tfjs-node/lib/napi-v8/:$LD_LIBRARY_PATH \n\
 \n\
-# Verify Ollama is running \n\
+# Check Ollama logs for issues \n\
+echo "Ollama log output:" \n\
+cat /tmp/ollama.log \n\
+\n\
+# Verify Ollama is running with better error reporting \n\
 echo "Checking Ollama connection..." \n\
 if curl -s http://localhost:11434/api/version > /dev/null; then \n\
   echo "✅ Ollama is running" \n\
 else \n\
   echo "⚠️ Warning: Ollama is not responding" \n\
+  echo "Detailed Ollama status:" \n\
+  ps aux | grep ollama \n\
+  echo "Checking Ollama port:" \n\
+  netstat -tuln | grep 11434 || echo "netstat not available" \n\
 fi \n\
 \n\
-# Verify Nginx + Ollama proxy is working \n\
+# Verify Nginx + Ollama proxy is working with more debug info \n\
 echo "Checking Nginx proxy to Ollama..." \n\
-if curl -s http://localhost:8081/ollama/api/version > /dev/null; then \n\
+NGINX_OLLAMA_RESULT=$(curl -v http://localhost:8081/ollama/api/version 2>&1) \n\
+if echo "$NGINX_OLLAMA_RESULT" | grep -q "200 OK"; then \n\
   echo "✅ Nginx proxy to Ollama is working" \n\
 else \n\
   echo "⚠️ Warning: Nginx proxy to Ollama is not working" \n\
+  echo "Nginx debug info:" \n\
+  echo "$NGINX_OLLAMA_RESULT" \n\
+  echo "Nginx configuration check:" \n\
+  nginx -t \n\
+  echo "Nginx process check:" \n\
+  ps aux | grep nginx \n\
 fi \n\
 \n\
-# Start the Node.js application \n\
-echo "Starting Node.js application..." \n\
+# Start the Node.js application with clear port specification \n\
+echo "Starting Node.js application on port 10000..." \n\
 exec node server.js' > /usr/src/app/docker-entrypoint.sh
 
 RUN chmod +x /usr/src/app/docker-entrypoint.sh

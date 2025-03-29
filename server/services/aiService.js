@@ -9,43 +9,12 @@ dotenv.config();
 import ollama from 'ollama';
 
 // Configure Ollama
-const ollamaHost = process.env.OLLAMA_HOST || 'https://chatbot-x8x4.onrender.com/ollama';
+const ollamaHost = process.env.OLLAMA_HOST || 'https://chatbot-x8x4.onrender.com';
 const ollamaModel = process.env.OLLAMA_MODEL || 'llama3';
-const isRenderEnv = process.env.RENDER === 'true';
-
-// Determine if we're in local or Render environment
-console.log(`Environment: ${isRenderEnv ? 'Render (Production)' : 'Local Development'}`);
-console.log(`Ollama Host: ${ollamaHost}`);
 
 // Add fallback configuration for OpenAI
 const openaiApiKey = process.env.OPENAI_API_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
-
-/**
- * Check if Ollama is available
- * @returns {Promise<boolean>} - Whether Ollama is available
- */
-async function isOllamaAvailable() {
-  try {
-    console.log(`Testing Ollama availability at ${ollamaHost}...`);
-    const response = await fetch(`${ollamaHost}/api/version`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 5000
-    });
-    
-    if (response.ok) {
-      console.log('Ollama is available');
-      return true;
-    }
-    
-    console.log(`Ollama is not available. Status: ${response.status}`);
-    return false;
-  } catch (error) {
-    console.error('Ollama availability check failed:', error.message);
-    return false;
-  }
-}
 
 /**
  * Process NLP tasks using Ollama
@@ -61,35 +30,6 @@ export async function processNLPTask(content, task = 'general', chatHistory = []
     console.log('- Task:', task);
     console.log('- Chat history length:', chatHistory.length);
     console.log('- Ollama Host:', ollamaHost);
-
-    // Check Ollama availability first if in Render environment
-    if (isRenderEnv && !(await isOllamaAvailable())) {
-      console.log('Ollama is not available in Render environment. Using fallbacks...');
-      
-      // Try to use OpenAI fallback
-      if (openaiApiKey) {
-        try {
-          console.log("Using OpenAI as primary fallback");
-          return await fallbackToOpenAI(content, task, chatHistory);
-        } catch (error) {
-          console.error("OpenAI fallback failed:", error.message);
-        }
-      }
-      
-      // Try Gemini fallback if OpenAI fails
-      if (geminiApiKey) {
-        try {
-          console.log("Using Gemini as secondary fallback");
-          return await fallbackToGemini(content, task, chatHistory);
-        } catch (error) {
-          console.error("Gemini fallback failed:", error.message);
-        }
-      }
-      
-      // If all fallbacks fail, use static response
-      console.log("All fallbacks failed. Using static response.");
-      return generateStaticFallbackResponse(task, content);
-    }
 
     let systemPrompt = "You are an AI digital twin assistant. Be concise.";
     
