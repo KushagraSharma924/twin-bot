@@ -1,0 +1,46 @@
+# Exclude everything first
+*
+
+# Then include only the server directory
+!server/
+
+# Node.js dependencies in server directory
+server/node_modules
+server/npm-debug.log
+server/yarn-debug.log
+server/yarn-error.log
+
+# Environment variables and secrets
+server/.env
+server/.env.*
+!server/.env.example
+
+# Git and version control
+server/.git
+server/.gitignore
+server/.github/
+
+# Development files
+server/*.log
+server/tests/
+server/docs/
+server/test-*.js
+server/*.test.js
+server/*.spec.js
+server/coverage/
+server/.nyc_output/
+
+# Temporary files
+server/tmp/
+server/temp/
+server/*.tmp
+server/*.temp
+server/.cache/
+
+# OS files
+server/.DS_Store
+server/Thumbs.db
+
+# Don't need Docker files inside the server directory as we're using the root one
+server/Dockerfile
+server/.dockerignore 
