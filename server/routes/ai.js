@@ -754,4 +754,81 @@ router.get('/twin/tensorflow/status', async (req, res) => {
   }
 });
 
+/**
+ * Unified AI text generation (serves as a catch-all for client requests)
+ * POST /api/ai/generate
+ */
+router.post('/generate', async (req, res) => {
+  try {
+    const { prompt, model, max_tokens } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({ error: 'Prompt is required' });
+    }
+    
+    console.log(`AI generate request received with model "${model || 'default'}" and ${max_tokens || 'default'} max tokens`);
+    
+    let response;
+    let serviceUsed = 'none';
+    
+    // Try OpenAI first if configured
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        console.log('Attempting to use OpenAI for generation');
+        response = await aiService.generateTextWithOpenAI(prompt, model || 'gpt-3.5-turbo', max_tokens || 500);
+        serviceUsed = 'openai';
+        console.log('Successfully generated text with OpenAI');
+      } catch (openaiError) {
+        console.error('OpenAI generation failed:', openaiError.message);
+        // Continue to next option
+      }
+    }
+    
+    // If OpenAI failed or isn't configured, try Gemini
+    if (!response && process.env.GEMINI_API_KEY) {
+      try {
+        console.log('Attempting to use Gemini for generation');
+        response = await aiService.generateTextWithGemini(prompt, model || 'gemini-pro', max_tokens || 500);
+        serviceUsed = 'gemini';
+        console.log('Successfully generated text with Gemini');
+      } catch (geminiError) {
+        console.error('Gemini generation failed:', geminiError.message);
+        // Continue to next option
+      }
+    }
+    
+    // If both failed, use Ollama or fallback to static response
+    if (!response) {
+      try {
+        console.log('Attempting to use Ollama for generation');
+        response = await aiService.processNLPTask(prompt, 'email');
+        serviceUsed = 'ollama';
+        console.log('Successfully generated text with Ollama');
+      } catch (ollamaError) {
+        console.error('All AI services failed for text generation');
+        // Return a useful error message
+        return res.status(500).json({ 
+          error: 'All configured AI services failed to generate a response',
+          serviceAttempted: [
+            process.env.OPENAI_API_KEY ? 'OpenAI' : null,
+            process.env.GEMINI_API_KEY ? 'Gemini' : null,
+            'Ollama'
+          ].filter(Boolean).join(', ')
+        });
+      }
+    }
+    
+    // Return the generated text with metadata
+    res.json({ 
+      text: response,
+      service: serviceUsed,
+      model: model || 'default',
+      generated: true
+    });
+  } catch (error) {
+    console.error('AI generate endpoint error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router; 

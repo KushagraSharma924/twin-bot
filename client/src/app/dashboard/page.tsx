@@ -225,28 +225,28 @@ export default function DashboardPage() {
                   <div>
                     <div className="flex justify-between mb-1">
                       <span className="text-sm text-gray-300">Writing Style</span>
-                      <span className="text-sm text-gray-300">76%</span>
+                      <span className="text-sm text-gray-300">7%</span>
                     </div>
                     <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-                      <div className="bg-[var(--supabase-accent)] h-full" style={{ width: "76%" }}></div>
+                      <div className="bg-[var(--supabase-accent)] h-full" style={{ width: "7%" }}></div>
                     </div>
                   </div>
                   <div>
                     <div className="flex justify-between mb-1">
                       <span className="text-sm text-gray-300">Calendar Preferences</span>
-                      <span className="text-sm text-gray-300">64%</span>
+                      <span className="text-sm text-gray-300">20%</span>
                     </div>
                     <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-                      <div className="bg-[var(--supabase-accent)] h-full" style={{ width: "64%" }}></div>
+                      <div className="bg-[var(--supabase-accent)] h-full" style={{ width: "20%" }}></div>
                     </div>
                   </div>
                   <div>
                     <div className="flex justify-between mb-1">
                       <span className="text-sm text-gray-300">Research Interests</span>
-                      <span className="text-sm text-gray-300">82%</span>
+                      <span className="text-sm text-gray-300">22%</span>
                     </div>
                     <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-                      <div className="bg-[var(--supabase-accent)] h-full" style={{ width: "82%" }}></div>
+                      <div className="bg-[var(--supabase-accent)] h-full" style={{ width: "22%" }}></div>
                     </div>
                   </div>
                 </div>

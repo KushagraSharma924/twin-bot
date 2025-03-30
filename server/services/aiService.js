@@ -1568,4 +1568,94 @@ Research Interests:`;
     console.error('Error extracting research interests:', error);
     return ['AI & Machine Learning']; // Default fallback
   }
+}
+
+/**
+ * Generate text using OpenAI API
+ * @param {string} prompt - The prompt to generate text from
+ * @param {string} [model='gpt-3.5-turbo'] - The model to use for generation
+ * @param {number} [maxTokens=500] - Maximum tokens to generate
+ * @returns {Promise<string>} - The generated text
+ */
+export async function generateTextWithOpenAI(prompt, model = 'gpt-3.5-turbo', maxTokens = 500) {
+  try {
+    // Check if OpenAI is configured
+    if (!openaiApiKey) {
+      throw new Error('OpenAI API key not configured');
+    }
+    
+    console.log(`Generating text with OpenAI using model: ${model}`);
+    
+    // Use OpenAI node client
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openaiApiKey}`
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful assistant that provides clear, concise responses.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.7
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI API error: ${error}`);
+    }
+    
+    const data = await response.json();
+    return data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('Error generating text with OpenAI:', error);
+    throw error;
+  }
+}
+
+/**
+ * Generate text using Google Gemini API
+ * @param {string} prompt - The prompt to generate text from
+ * @param {string} [model='gemini-pro'] - The model to use for generation
+ * @param {number} [maxTokens=500] - Maximum tokens to generate
+ * @returns {Promise<string>} - The generated text
+ */
+export async function generateTextWithGemini(prompt, model = 'gemini-pro', maxTokens = 500) {
+  try {
+    // Check if Gemini is configured
+    if (!geminiApiKey) {
+      throw new Error('Gemini API key not configured');
+    }
+    
+    console.log(`Generating text with Gemini using model: ${model}`);
+    
+    // Initialize Gemini client
+    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    const geminiModel = genAI.getGenerativeModel({ model: model });
+    
+    // Generate content
+    const result = await geminiModel.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: maxTokens,
+        temperature: 0.7
+      }
+    });
+    
+    const response = result.response;
+    return response.text().trim();
+  } catch (error) {
+    console.error('Error generating text with Gemini:', error);
+    throw error;
+  }
 } 

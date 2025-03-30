@@ -18,7 +18,7 @@ import {
 } from "lucide-react"
 
 interface SidebarProps {
-  activePage?: "dashboard" | "chat" | "emails" | "calendar" | "research" | "direct-chat"
+  activePage?: "dashboard" | "chat" | "emails" | "calendar" | "research"
   isOpen?: boolean
   setIsOpen?: Dispatch<SetStateAction<boolean>>
 }
@@ -77,12 +77,6 @@ export default function Sidebar({ activePage = "chat", isOpen, setIsOpen }: Side
             <button className={`flex items-center space-x-3 ${activePage === "chat" ? "bg-[#272727] text-white" : "text-gray-400"} hover:bg-[#272727] hover:text-white px-4 py-3 w-full text-left`}>
               <MessagesSquare size={20} />
               {sidebarOpen && <span>Chat</span>}
-            </button>
-          </Link>
-          <Link href="/direct-chat" passHref>
-            <button className={`flex items-center space-x-3 ${activePage === "direct-chat" ? "bg-[#272727] text-white" : "text-gray-400"} hover:bg-[#272727] hover:text-white px-4 py-3 w-full text-left`}>
-              <MessageCircle size={20} />
-              {sidebarOpen && <span>Direct Chat</span>}
             </button>
           </Link>
           <Link href="/dashboard/emails" passHref>

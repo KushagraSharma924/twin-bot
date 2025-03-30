@@ -1,4 +1,5 @@
 import { supabase } from '../config/index.js';
+import migrateConversationsTable from './migrations/fix-conversations-table.js';
 
 /**
  * Ensures all necessary tables exist in the database
@@ -24,6 +25,18 @@ export async function ensureTables() {
     
     // Verify and create email metadata table
     await ensureEmailMetadataTable();
+    
+    // Run conversations table migration to fix created_at column
+    try {
+      const migrationResult = await migrateConversationsTable();
+      if (migrationResult) {
+        console.log('Conversations table migration completed successfully');
+      } else {
+        console.warn('Conversations table migration was not needed or could not be completed');
+      }
+    } catch (migrationError) {
+      console.error('Error during conversations table migration:', migrationError);
+    }
     
     console.log('Database initialization complete.');
   } catch (error) {

@@ -130,17 +130,21 @@ export function createImapClient(credentials) {
  * @param {number} options.limit - Maximum number of emails to fetch (default: 20)
  * @param {string} options.mailbox - Mailbox to fetch from (default: 'INBOX')
  * @param {boolean} options.unseen - Whether to fetch only unseen messages (default: false)
+ * @param {boolean} options.reverse - Whether to fetch in reverse chronological order (default: true)
  * @returns {Promise<Array>} Array of email objects
  */
 export async function fetchEmails(credentials, options = {}) {
   const limit = options.limit || 20;
   const mailbox = options.mailbox || 'INBOX';
   const unseenOnly = options.unseen || false;
+  // Default to reverse: true (newest first) unless explicitly set to false
+  const reverse = options.reverse !== false;
   
   console.log('fetchEmails called with options:', JSON.stringify({
     limit,
     mailbox,
     unseenOnly,
+    reverse,
     credentials: {
       host: credentials.host,
       user: credentials.user,
@@ -222,7 +226,7 @@ export async function fetchEmails(credentials, options = {}) {
     
     // Build search query
     const searchOptions = {
-      reverse: true, // Get newest emails first
+      reverse, // Always use reverse (default: true) to get newest emails first unless specified otherwise
       limit
     };
     
@@ -799,6 +803,113 @@ export async function refreshOAuth2Token(tokenInfo) {
     };
   } catch (error) {
     console.error('Error refreshing OAuth token:', error);
+    throw error;
+  }
+}
+
+/**
+ * Send an email or reply to an existing email
+ * @param {Object} credentials - User's email credentials
+ * @param {Object} emailData - Email data to send
+ * @param {string} emailData.to - Recipient email address
+ * @param {string} emailData.subject - Email subject
+ * @param {string} emailData.text - Plain text content
+ * @param {string} emailData.html - HTML content (optional)
+ * @param {string} emailData.inReplyTo - Message ID to reply to (optional)
+ * @param {string} emailData.references - References for threading (optional)
+ * @returns {Promise<Object>} Result of the send operation
+ */
+export async function sendEmail(credentials, emailData) {
+  // Input validation
+  if (!emailData.to) {
+    throw new Error('Recipient (to) is required');
+  }
+  
+  if (!emailData.subject) {
+    throw new Error('Email subject is required');
+  }
+  
+  if (!emailData.text && !emailData.html) {
+    throw new Error('Email content (text or html) is required');
+  }
+  
+  // We need to use a different package for sending emails
+  // Import nodemailer dynamically to avoid loading issues
+  const nodemailer = await import('nodemailer');
+  
+  // Create SMTP configuration based on IMAP credentials
+  const smtpConfig = {
+    host: credentials.host.replace('imap.', 'smtp.'), // Convert IMAP host to SMTP host
+    port: 587, // Standard SMTP port
+    secure: false, // Use TLS
+    auth: {}
+  };
+  
+  // Handle special cases for common providers
+  if (credentials.provider === 'gmail') {
+    smtpConfig.host = 'smtp.gmail.com';
+  } else if (credentials.provider === 'outlook') {
+    smtpConfig.host = 'smtp.office365.com';
+  } else if (credentials.provider === 'yahoo') {
+    smtpConfig.host = 'smtp.mail.yahoo.com';
+    smtpConfig.port = 465;
+    smtpConfig.secure = true;
+  }
+  
+  // Set authentication method based on credentials
+  if (credentials.oauth2) {
+    smtpConfig.auth = {
+      type: 'OAuth2',
+      user: credentials.user,
+      accessToken: credentials.oauth2.accessToken
+    };
+  } else {
+    smtpConfig.auth = {
+      user: credentials.user,
+      pass: credentials.password
+    };
+  }
+  
+  // Create transporter
+  const transporter = nodemailer.default.createTransport(smtpConfig);
+  
+  // Prepare email data
+  const mailOptions = {
+    from: credentials.user,
+    to: emailData.to,
+    subject: emailData.subject,
+    text: emailData.text || '',
+    html: emailData.html || undefined
+  };
+  
+  // Add threading headers for replies if provided
+  if (emailData.inReplyTo) {
+    mailOptions.inReplyTo = emailData.inReplyTo;
+  }
+  
+  if (emailData.references) {
+    mailOptions.references = emailData.references;
+  }
+  
+  // Send the email
+  console.log('Sending email with options:', {
+    to: mailOptions.to,
+    subject: mailOptions.subject,
+    contentLength: (mailOptions.text || '').length,
+    hasHtml: !!mailOptions.html,
+    isReply: !!mailOptions.inReplyTo
+  });
+  
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Email sent successfully:', info.messageId);
+    return {
+      success: true,
+      messageId: info.messageId,
+      response: info.response
+    };
+  } catch (error) {
+    console.error('Error sending email:', error);
     throw error;
   }
 } 

@@ -41,11 +41,13 @@
     "jsonwebtoken": "^9.0.2",
     "mailparser": "^3.6.5",
     "node-fetch": "^3.3.2",
+    "nodemailer": "^6.10.0",
     "ollama": "^0.5.14",
     "tailwind-merge": "^3.0.2",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@types/nodemailer": "^6.4.17",
     "nodemon": "^3.0.2"
   }
 }

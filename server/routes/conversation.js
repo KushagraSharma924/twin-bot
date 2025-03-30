@@ -1,6 +1,8 @@
 import express from 'express';
 import * as supabaseService from '../services/supabaseService.js';
 import { supabase } from '../config/index.js';
+import { authMiddleware } from '../middleware/auth.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -215,6 +217,282 @@ router.post('/delete', async (req, res) => {
       success: false,
       error: error.message || 'Internal server error'
     });
+  }
+});
+
+/**
+ * @route GET /api/conversations
+ * @desc Get all conversations for the current user
+ * @access Private
+ */
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Check if supabase is available
+    if (!supabase) {
+      logger.warn('Supabase not available, returning empty conversations list');
+      return res.json({ conversations: [] });
+    }
+    
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('*')
+      .eq('user_id', userId)
+      .order('timestamp', { ascending: false });
+    
+    if (error) {
+      logger.error('Error fetching conversations', { error: error.message, userId });
+      return res.status(500).json({ error: 'Error fetching conversations' });
+    }
+    
+    return res.json({ conversations: data });
+  } catch (error) {
+    logger.error('Error in GET /conversations', { error: error.message });
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * @route GET /api/conversations/recent
+ * @desc Get recent chat messages from conversations
+ * @access Private
+ */
+router.get('/recent', authMiddleware, async (req, res) => {
+  try {
+    // Check if user object is available
+    if (!req.user || !req.user.id) {
+      logger.error('User not authenticated or user ID not available');
+      return res.status(401).json({ 
+        error: 'Authentication required',
+        messages: [
+          {
+            id: 'fallback-1',
+            content: 'What are the latest advancements in artificial intelligence?',
+            role: 'user',
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 'fallback-2',
+            content: 'Explain the principles of quantum computing',
+            role: 'user',
+            created_at: new Date().toISOString()
+          }
+        ] 
+      });
+    }
+    
+    const userId = req.user.id;
+    const limit = parseInt(req.query.limit) || 10;
+    
+    // If Supabase is not available, return fallback messages
+    if (!supabase) {
+      logger.warn('Supabase not available, returning fallback messages');
+      return res.json({
+        messages: [
+          {
+            id: 'fallback-1',
+            content: 'What are the latest advancements in artificial intelligence?',
+            role: 'user',
+            timestamp: new Date().toISOString()
+          },
+          {
+            id: 'fallback-2',
+            content: 'Explain the principles of quantum computing',
+            role: 'user',
+            timestamp: new Date().toISOString()
+          },
+          {
+            id: 'fallback-3',
+            content: 'How is machine learning being applied in healthcare?',
+            role: 'user',
+            timestamp: new Date().toISOString()
+          }
+        ]
+      });
+    }
+    
+    logger.info(`Fetching recent non-personal conversations for user: ${userId}`);
+    
+    // Get messages directly from the conversations table
+    // Filter for user messages only (source = 'user')
+    const { data: messages, error } = await supabase
+      .from('conversations')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('source', 'user')
+      .order('timestamp', { ascending: false })
+      .limit(limit);
+    
+    if (error) {
+      logger.error('Error fetching recent conversations', { error: error.message, userId });
+      return res.json({
+        messages: [
+          {
+            id: 'fallback-1',
+            content: 'What are the latest advancements in artificial intelligence?',
+            role: 'user',
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 'fallback-2',
+            content: 'Explain the principles of quantum computing',
+            role: 'user',
+            created_at: new Date().toISOString()
+          }
+        ]
+      });
+    }
+    
+    if (!messages || messages.length === 0) {
+      logger.info('No messages found for user, returning fallback messages');
+      return res.json({
+        messages: [
+          {
+            id: 'fallback-1',
+            content: 'What are the latest advancements in artificial intelligence?',
+            role: 'user',
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 'fallback-2',
+            content: 'Explain the principles of quantum computing',
+            role: 'user',
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 'fallback-3',
+            content: 'How is machine learning being applied in healthcare?',
+            role: 'user',
+            created_at: new Date().toISOString()
+          }
+        ]
+      });
+    }
+    
+    // Filter out personal messages
+    // Personal messages often contain "I", "me", "my", "we", "our" etc.
+    const nonPersonalMessages = messages.filter(msg => {
+      const content = msg.message?.toLowerCase() || '';
+      
+      // Skip very short messages
+      if (content.length < 10) return false;
+      
+      // Skip messages that are likely personal questions
+      const personalPhrases = ['i ', 'me ', 'my ', 'mine ', 'we ', 'our ', 'us ', 
+                               'myself ', 'please ', 'help me', 'can you help', 
+                               'email', 'phone', 'address', 'contact'];
+                               
+      // If the message contains a personal phrase, skip it
+      for (const phrase of personalPhrases) {
+        if (content.includes(phrase)) return false;
+      }
+      
+      return true;
+    });
+    
+    logger.info(`Found ${nonPersonalMessages.length} non-personal messages out of ${messages.length} total`);
+    
+    // If we filtered out all messages, return some defaults
+    if (nonPersonalMessages.length === 0) {
+      logger.info('No non-personal messages found, returning fallback messages');
+      return res.json({
+        messages: [
+          {
+            id: 'fallback-1',
+            content: 'What are the latest advancements in artificial intelligence?',
+            role: 'user',
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 'fallback-2',
+            content: 'Explain the principles of quantum computing',
+            role: 'user',
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 'fallback-3',
+            content: 'How is machine learning being applied in healthcare?',
+            role: 'user',
+            created_at: new Date().toISOString()
+          }
+        ]
+      });
+    }
+    
+    // Prepare messages for client consumption
+    const transformedMessages = nonPersonalMessages.map(msg => ({
+      id: msg.id,
+      content: msg.message || '',
+      role: 'user',
+      created_at: msg.timestamp || new Date().toISOString() // Use timestamp as created_at
+    }));
+    
+    logger.info(`Returning ${transformedMessages.length} non-personal messages to client`);
+    return res.json({ messages: transformedMessages });
+  } catch (error) {
+    logger.error('Error in GET /conversations/recent', { error: error.message });
+    return res.status(500).json({
+      messages: [
+        {
+          id: 'fallback-1',
+          content: 'What are the latest advancements in artificial intelligence?',
+          role: 'user',
+          created_at: new Date().toISOString()
+        },
+        {
+          id: 'fallback-2',
+          content: 'Explain the principles of quantum computing',
+          role: 'user',
+          created_at: new Date().toISOString()
+        }
+      ]
+    });
+  }
+});
+
+/**
+ * @route POST /api/conversations
+ * @desc Create a new conversation
+ * @access Private
+ */
+router.post('/', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { title } = req.body;
+    
+    // Check if supabase is available
+    if (!supabase) {
+      logger.warn('Supabase not available, returning mock conversation');
+      return res.status(201).json({ 
+        conversation: {
+          id: 'mock-' + Date.now(),
+          user_id: userId,
+          title: title || 'New Conversation',
+          created_at: new Date().toISOString()
+        } 
+      });
+    }
+    
+    // Create a new conversation
+    const { data, error } = await supabase
+      .from('conversations')
+      .insert([{
+        user_id: userId,
+        title: title || 'New Conversation',
+        created_at: new Date().toISOString()
+      }])
+      .select();
+    
+    if (error) {
+      logger.error('Error creating conversation', { error: error.message, userId });
+      return res.status(500).json({ error: 'Error creating conversation' });
+    }
+    
+    return res.status(201).json({ conversation: data[0] });
+  } catch (error) {
+    logger.error('Error in POST /conversations', { error: error.message });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 

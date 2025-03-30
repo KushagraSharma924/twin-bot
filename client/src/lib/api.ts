@@ -715,6 +715,67 @@ export async function fetchEmails(options: {
   }
 }
 
+/**
+ * Fetch sent emails from all possible sent mailboxes
+ * This function uses a specialized endpoint that intelligently finds and retrieves
+ * sent emails across different email providers
+ */
+export async function fetchSentEmails(options: { 
+  limit?: number;
+} = {}): Promise<{ emails: Email[]; error?: boolean }> {
+  try {
+    const session = getSession();
+    if (!session || !session.access_token) {
+      console.warn("No session or access token, can't fetch sent emails");
+      return { emails: [], error: true };
+    }
+
+    console.log("Fetching recent sent emails...");
+    const response = await fetch(`${API_URL}/api/email/sent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({
+        limit: options.limit || 50, // Default to 50 recent emails
+        newest_first: true // Parameter to indicate we want newest emails first
+      })
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        console.warn("Authentication error when fetching sent emails, attempting token refresh");
+        const refreshed = await refreshAccessToken();
+        if (refreshed) {
+          return fetchSentEmails(options);
+        }
+        return { emails: [], error: true };
+      }
+
+      const errorData = await response.json();
+      console.error("Sent email fetch error:", errorData);
+      return { emails: [], error: true };
+    }
+
+    const data = await response.json();
+    
+    // Further sort emails by date on the client side to ensure newest first
+    const emails = data.emails || [];
+    emails.sort((a: Email, b: Email) => {
+      const dateA = new Date(a.date || a.receivedDate || 0);
+      const dateB = new Date(b.date || b.receivedDate || 0);
+      return dateB.getTime() - dateA.getTime(); // Newest first
+    });
+    
+    console.log(`Fetched ${emails.length} sent emails, sorted newest first`);
+    return { emails };
+  } catch (error) {
+    console.error('Error fetching sent emails:', error);
+    return { emails: [], error: true };
+  }
+}
+
 export async function listMailboxes(): Promise<{ mailboxes: Mailbox[]; error?: boolean }> {
   try {
     const session = getSession();
@@ -1598,4 +1659,56 @@ export async function deleteResearchDocument(id: string) {
   }
 
   return true;
+}
+
+/**
+ * Send an email or reply to an existing email
+ * @param options Email options including recipient, subject, and content
+ * @returns Promise with the result of the send operation
+ */
+export async function sendEmail(options: {
+  to: string;
+  subject: string;
+  text?: string;
+  html?: string;
+  inReplyTo?: string;
+  references?: string;
+  mailbox?: string;
+}): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  try {
+    const session = getSession();
+    if (!session) {
+      return { success: false, error: 'Authentication required' };
+    }
+
+    const response = await fetch(`${API_URL}/api/email/send`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify(options)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Error sending email:', error);
+      return { 
+        success: false, 
+        error: error.error || 'Failed to send email' 
+      };
+    }
+
+    const result = await response.json();
+    return { 
+      success: true, 
+      messageId: result.messageId 
+    };
+  } catch (err) {
+    console.error('Error sending email:', err);
+    return { 
+      success: false, 
+      error: err instanceof Error ? err.message : 'An unexpected error occurred' 
+    };
+  }
 } 

@@ -296,7 +296,7 @@ export const startRealtimeResearch = async (
   try {
     console.log(`Starting real-time research for query: "${query}" with sources:`, sources);
     
-    const response = await fetch(`${API_URL}/api/research/realtime`, {
+    const response = await fetch(`${API_URL}/research/realtime`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -456,7 +456,7 @@ export const getProcessStatus = async (processId: string): Promise<any> => {
         type: 'realtime',
         status: 'completed',
         query: 'mock query',
-        sources: ['wikipedia'],
+        sources: ['arxiv', 'techblogs', 'gnews'],
         created_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
         result_count: mockDocuments.length
@@ -468,7 +468,7 @@ export const getProcessStatus = async (processId: string): Promise<any> => {
   try {
     console.log(`Checking status for research process: ${processId}`);
     
-    const response = await fetch(`${API_URL}/api/research/process/${processId}`, {
+    const response = await fetch(`${API_URL}/research/process/${processId}`, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
@@ -488,7 +488,7 @@ export const getProcessStatus = async (processId: string): Promise<any> => {
           type: 'realtime',
           status: 'completed',
           query: 'unavailable query',
-          sources: ['unavailable'],
+          sources: ['arxiv', 'techblogs', 'gnews'],
           created_at: new Date().toISOString(),
           completed_at: new Date().toISOString(),
           result_count: 2
@@ -643,16 +643,27 @@ export const getUserResearchInterests = async (): Promise<string[]> => {
   const token = getAuthToken();
   if (!token) {
     console.error('Authentication required to fetch user interests');
-    throw new Error('Authentication required to fetch user interests');
+    return defaultResearchInterests();
   }
 
   try {
     console.log('Fetching user research interests from chat history');
     
-    const response = await fetch(`${API_URL}/research/interests`, {
+    // Get the API base URL, ensuring /api prefix is used properly
+    const baseUrl = typeof window !== 'undefined'
+      ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002')
+      : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002');
+    
+    console.log(`Using API base URL: ${baseUrl}`);
+    
+    // Make sure we're using /api prefix in the endpoint URL
+    const response = await fetch(`${baseUrl}/api/research/interests`, {
+      method: 'GET',
       headers: {
+        'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
-      }
+      },
+      credentials: 'include'
     });
 
     console.log(`Interests API response status: ${response.status}`);
@@ -660,30 +671,54 @@ export const getUserResearchInterests = async (): Promise<string[]> => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`API error (${response.status}): ${errorText}`);
-      throw new Error(`Failed to fetch user interests: ${response.status} - ${errorText}`);
+      
+      // Return default interests instead of throwing an error
+      return defaultResearchInterests();
     }
     
     // Check for empty response
     const text = await response.text();
     if (!text) {
       console.error('Empty response from interests API');
-      throw new Error('Empty response from interests API');
+      return defaultResearchInterests();
     }
     
     // Try to parse JSON response
     try {
       const data = JSON.parse(text);
-      console.log('User interests:', data);
-      return data.interests || [];
+      if (data && Array.isArray(data.interests) && data.interests.length > 0) {
+        return data.interests;
+      } else if (data && Array.isArray(data) && data.length > 0) {
+        return data;
+      } else {
+        console.warn('Invalid interests data format, using default interests');
+        return defaultResearchInterests();
+      }
     } catch (parseError) {
-      console.error('Error parsing interests response:', parseError, 'Response:', text);
-      throw new Error('Invalid response format from interests API');
+      console.error('Error parsing interests response:', parseError);
+      return defaultResearchInterests();
     }
   } catch (error) {
-    console.error('Error fetching user research interests:', error);
-    throw error;
+    console.error('Error fetching user interests:', error);
+    return defaultResearchInterests();
   }
 };
+
+// Add a function to provide default research interests
+function defaultResearchInterests(): string[] {
+  return [
+    'Artificial Intelligence',
+    'Machine Learning',
+    'Data Science',
+    'Renewable Energy',
+    'Climate Change',
+    'Quantum Computing',
+    'Blockchain Technology', 
+    'Cybersecurity',
+    'Biotechnology',
+    'Space Exploration'
+  ];
+}
 
 /**
  * Mock function to extract research interests from a chat message
@@ -842,7 +877,19 @@ function getDefaultSuggestions(baseQuery?: string): string[] {
   ];
 }
 
-// Replace the existing getAuthToken function
+// Add a utility function to handle API errors consistently
+function handleApiError(endpoint: string, error: any, defaultValue: any): any {
+  console.error(`Error in ${endpoint} API call:`, error);
+  
+  // Check for common connection issues
+  if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+    console.warn(`Connection error to ${endpoint} endpoint. Check if the server is running and accessible.`);
+  }
+  
+  return defaultValue;
+}
+
+// Keep the original getAuthToken implementation
 export const getAuthToken = (): string | null => {
   // Check if we're in a browser environment
   if (typeof window === 'undefined') {

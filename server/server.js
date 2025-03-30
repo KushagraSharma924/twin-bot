@@ -6,6 +6,8 @@ import * as authService from './services/authService.js';
 
 // Import middleware
 import { authMiddleware, adminMiddleware, emailMiddleware } from './middleware/auth.js';
+// Import mock authentication for testing
+import { mockAuthMiddleware, shouldUseMockAuth } from './middleware/mock-auth.js';
 import calendarService from './services/calendarService.js';
 
 // Import routes
@@ -147,6 +149,15 @@ app.use(express.json());
 
 // Static files
 app.use(express.static('public'));
+
+// Determine which auth middleware to use
+const getAuthMiddleware = () => {
+  if (shouldUseMockAuth()) {
+    console.log('⚠️ Using mock authentication middleware for development testing');
+    return mockAuthMiddleware;
+  }
+  return authMiddleware;
+};
 
 // Public health check endpoint
 app.get('/health', (req, res) => {
@@ -299,25 +310,25 @@ app.get('/service-unavailable', (req, res) => {
   `);
 });
 
-// Apply auth middleware to protected routes
+// Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/email', emailMiddleware, emailRoutes);
-app.use('/api/ai', authMiddleware, aiRoutes);
-app.use('/api/calendar', authMiddleware, calendarRoutes);
-app.use('/api/conversations', authMiddleware, conversationRoutes);
-app.use('/api/research', authMiddleware, researchRoutes);
-app.use('/api/user', authMiddleware, userRoutes);
+app.use('/api/email', getAuthMiddleware(), emailRoutes);
+app.use('/api/ai', getAuthMiddleware(), aiRoutes);
+app.use('/api/calendar', getAuthMiddleware(), calendarRoutes);
+app.use('/api/conversations', getAuthMiddleware(), conversationRoutes);
+app.use('/api/research', getAuthMiddleware(), researchRoutes);
+app.use('/api/user', getAuthMiddleware(), userRoutes);
 // Use the AI routes for twin functionality
-app.use('/api/twin', authMiddleware, (req, res, next) => {
+app.use('/api/twin', getAuthMiddleware(), (req, res, next) => {
   // Rewrite the URL path to use our AI endpoints
   req.url = '/twin' + req.url;
   next();
 }, aiRoutes);
-app.use('/api/browser', authMiddleware);
+app.use('/api/browser', getAuthMiddleware());
 app.use('/api/admin', adminMiddleware);
 
 // Calendar API: Create event
-app.post('/api/calendar/create-event', authMiddleware, async (req, res) => {
+app.post('/api/calendar/create-event', getAuthMiddleware(), async (req, res) => {
   try {
     console.log('POST /api/calendar/create-event');
     
@@ -390,7 +401,7 @@ app.post('/api/calendar/create-event', authMiddleware, async (req, res) => {
 });
 
 // Calendar API: Get events
-app.get('/api/calendar/events', authMiddleware, async (req, res) => {
+app.get('/api/calendar/events', getAuthMiddleware(), async (req, res) => {
   try {
     console.log('GET /api/calendar/events');
     
@@ -438,7 +449,7 @@ app.get('/api/calendar/events', authMiddleware, async (req, res) => {
 });
 
 // Google Calendar Auth URL - Get authentication URL for Google Calendar
-app.get('/api/calendar/auth-url', authMiddleware, async (req, res) => {
+app.get('/api/calendar/auth-url', getAuthMiddleware(), async (req, res) => {
   try {
     console.log('GET /api/calendar/auth-url');
     const authUrl = calendarService.getAuthUrl();

@@ -1,0 +1,978 @@
+"use client"
+
+import { useState, useEffect, useRef } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+import Sidebar from "@/components/sidebar"
+import {
+  getUser,
+  logout,
+  fetchEmails,
+  listMailboxes,
+  markEmailAsRead,
+  moveEmail,
+  type Email,
+  type Mailbox,
+  getSession,
+  sendEmail,
+} from "@/lib/api"
+import { toast } from "sonner"
+import {
+  Bell,
+  ChevronDown,
+  Menu,
+  Search,
+  Star,
+  Archive,
+  Trash2,
+  Send,
+  Clock,
+  Tag,
+  Plus,
+  Mail,
+  User,
+  Settings,
+  LogOut,
+  MessageSquare,
+  Loader2,
+  RefreshCw,
+  X,
+  Reply,
+  Forward,
+  Paperclip,
+  Inbox,
+  ChevronLeft,
+  File,
+  Download,
+  Sparkles,
+  AlertCircle,
+} from "lucide-react"
+import { Textarea } from "@/components/ui/textarea"
+import DOMPurify from "dompurify"
+
+// Add API_URL constant after imports
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5002"
+
+// Email category types
+type EmailCategory = "primary" | "sent"
+
+// Helper function to categorize emails
+const categorizeEmail = (email: Email, currentMailboxParam: string): EmailCategory => {
+  // More robust check for sent mailboxes
+  const isSentMailbox = 
+    currentMailboxParam === "[Gmail]/Sent Mail" || 
+    currentMailboxParam === "SENT" || 
+    currentMailboxParam === "Sent" ||
+    currentMailboxParam.toLowerCase().includes("sent");
+  
+  if (isSentMailbox) {
+    return "sent";
+  }
+  
+  // Default to primary
+  return "primary";
+}
+
+// Helper function to check if a mailbox is a sent mailbox
+const isSentMailbox = (mailboxPath: string): boolean => {
+  return (
+    mailboxPath === "[Gmail]/Sent Mail" || 
+    mailboxPath === "SENT" || 
+    mailboxPath === "Sent" ||
+    mailboxPath.toLowerCase().includes("sent")
+  );
+}
+
+// Add mailbox icons mapping
+const mailboxIcons: { [key: string]: React.ReactNode } = {
+  INBOX: <Inbox className="h-4 w-4 mr-3" />,
+  "[Gmail]/Sent Mail": <Send className="h-4 w-4 mr-3" />,
+  "[Gmail]/Drafts": <Clock className="h-4 w-4 mr-3" />,
+  "[Gmail]/All Mail": <Archive className="h-4 w-4 mr-3" />,
+  "[Gmail]/Trash": <Trash2 className="h-4 w-4 mr-3" />,
+}
+
+// Add mailbox display names mapping
+const mailboxDisplayNames: { [key: string]: string } = {
+  INBOX: "Inbox",
+  "[Gmail]/Sent Mail": "Sent",
+  "[Gmail]/Drafts": "Drafts",
+  "[Gmail]/All Mail": "Archive",
+  "[Gmail]/Trash": "Trash",
+}
+
+export default function EmailsPage() {
+  const router = useRouter()
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [isProfileOpen, setIsProfileOpen] = useState(false)
+  const [user, setUser] = useState<{ id: string; email: string; name?: string } | null>(null)
+  const profileRef = useRef<HTMLDivElement>(null)
+
+  // Email-related state
+  const [emails, setEmails] = useState<Email[]>([])
+  const [filteredEmails, setFilteredEmails] = useState<Email[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [currentCategory, setCurrentCategory] = useState<EmailCategory>("primary")
+  const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
+  const [mailboxes, setMailboxes] = useState<Mailbox[]>([])
+  const [currentMailbox, setCurrentMailbox] = useState("INBOX")
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
+
+  // Add state for additional mailbox emails
+  const [sentEmails, setSentEmails] = useState<Email[]>([])
+  const [draftEmails, setDraftEmails] = useState<Email[]>([])
+  const [archiveEmails, setArchiveEmails] = useState<Email[]>([])
+  const [trashEmails, setTrashEmails] = useState<Email[]>([])
+
+  // Add useState hooks for reply functionality
+  const [isReplying, setIsReplying] = useState(false)
+  const [replyText, setReplyText] = useState("")
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [sendingReply, setSendingReply] = useState(false)
+
+  useEffect(() => {
+    const currentUser = getUser()
+    if (!currentUser) {
+      router.push("/login")
+    } else {
+      setUser(currentUser)
+    }
+
+    // Close dropdown when clicking outside
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+        setIsProfileOpen(false)
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+    }
+  }, [router])
+
+  // Load emails and mailboxes
+  useEffect(() => {
+    loadEmails()
+    loadMailboxes()
+  }, [])
+
+  // Filter emails by category whenever emails or currentCategory changes
+  useEffect(() => {
+    console.log(`Filtering emails for category: ${currentCategory}, current mailbox: ${currentMailbox}`);
+    
+    if (currentCategory === "sent") {
+      // If we're in the sent category, load emails from a Sent mailbox
+      if (!isSentMailbox(currentMailbox)) {
+        console.log("Not in a sent mailbox, switching...");
+        // Switch to sent mailbox
+        handleSwitchMailbox("[Gmail]/Sent Mail").catch(err => {
+          console.error("Failed to switch to sent mailbox:", err);
+          // Try another common sent mailbox format
+          handleSwitchMailbox("SENT").catch(innerErr => {
+            console.error("Failed to switch to alternate sent mailbox:", innerErr);
+            // Try one more format
+            handleSwitchMailbox("Sent").catch(finalErr => {
+              console.error("Failed to switch to any sent mailbox:", finalErr);
+              // Try to find a mailbox that contains "sent" in its name
+              const sentMailbox = mailboxes.find(mb => 
+                mb.path.toLowerCase().includes("sent")
+              );
+              if (sentMailbox) {
+                console.log(`Found alternative sent mailbox: ${sentMailbox.path}`);
+                handleSwitchMailbox(sentMailbox.path);
+              } else {
+                toast.error("Could not locate sent mailbox");
+              }
+            });
+          });
+        });
+      } else {
+        console.log(`Already in sent mailbox: ${currentMailbox}, showing all ${emails.length} emails`);
+        // When in sent category and a sent mailbox, show all emails
+        setFilteredEmails(emails);
+      }
+    } else {
+      // For primary, we should be in the INBOX
+      if (currentMailbox !== "INBOX" && currentCategory === "primary") {
+        console.log("Not in INBOX, switching...");
+        handleSwitchMailbox("INBOX").catch(err => {
+          console.error("Failed to switch to inbox:", err);
+        });
+      } else {
+        console.log(`Filtering ${emails.length} emails for primary category`);
+        // Filter based on the categorization
+        const filtered = emails.filter(email => categorizeEmail(email, currentMailbox) === currentCategory);
+        console.log(`After filtering: ${filtered.length} emails match the primary category`);
+        setFilteredEmails(filtered);
+      }
+    }
+  }, [emails, currentCategory, currentMailbox, mailboxes]);
+
+  // Fetch emails for all mailboxes
+  const loadEmails = async () => {
+    setLoading(true)
+    setError(null)
+
+    try {
+      // Special handling for sent mailbox
+      if (currentCategory === "sent") {
+        console.log("Loading emails for SENT category");
+        
+        // If we're not already in a sent mailbox, find one and switch to it
+        if (!isSentMailbox(currentMailbox)) {
+          console.log("Current mailbox doesn't look like a sent mailbox, trying to find sent mailbox");
+          
+          // Common sent mailbox paths
+          const sentMailboxOptions = ["[Gmail]/Sent Mail", "SENT", "Sent"];
+          
+          // Check if we have a sent mailbox in our mailboxes list
+          const sentMailbox = mailboxes.find(
+            mailbox => sentMailboxOptions.includes(mailbox.path) || 
+                       mailbox.path.toLowerCase().includes("sent")
+          );
+          
+          if (sentMailbox) {
+            console.log(`Found sent mailbox: ${sentMailbox.path}, switching to it`);
+            setCurrentMailbox(sentMailbox.path);
+            
+            // Immediately fetch emails from this mailbox
+            const result = await fetchEmails({
+              mailbox: sentMailbox.path,
+              limit: 50,
+            });
+            
+            if (result.error) {
+              setError("Failed to load sent emails. Please try again later.")
+              console.error("Error loading sent emails:", result.error);
+            } else {
+              console.log(`Loaded ${result.emails?.length || 0} emails from sent mailbox ${sentMailbox.path}`);
+              setEmails(result.emails || []);
+              // Force set filtered emails directly
+              setFilteredEmails(result.emails || []);
+            }
+            
+            setLoading(false);
+            return;
+          }
+        }
+      }
+
+      // Regular fetch if not a special case
+      console.log(`Fetching emails from ${currentMailbox}...`);
+      const result = await fetchEmails({
+        mailbox: currentMailbox,
+        limit: 50,
+      })
+
+      if (result.error) {
+        setError("Failed to load emails. Please try again later.")
+        console.error("Error loading emails:", result.error);
+      } else {
+        console.log(`Loaded ${result.emails?.length || 0} emails from ${currentMailbox}`);
+        setEmails(result.emails || []);
+        
+        // If we're in a sent mailbox, make sure we set the category to sent
+        if (isSentMailbox(currentMailbox) && currentCategory !== "sent") {
+          console.log("We're in a sent mailbox but category isn't set to sent, updating...");
+          setCurrentCategory("sent");
+        }
+        
+        // If we're in a sent category, set filtered emails directly
+        if (currentCategory === "sent" || isSentMailbox(currentMailbox)) {
+          console.log("Setting filtered emails directly for sent category");
+          setFilteredEmails(result.emails || []);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading emails:", err)
+      setError("Failed to load emails. Please try again later.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Fetch mailboxes
+  const loadMailboxes = async () => {
+    try {
+      const result = await listMailboxes()
+
+      if (result.error) {
+        console.error("Failed to load mailboxes")
+      } else {
+        setMailboxes(result.mailboxes || [])
+      }
+    } catch (err) {
+      console.error("Error loading mailboxes:", err)
+    }
+  }
+
+  // Handle category change
+  const handleCategoryChange = (category: EmailCategory) => {
+    console.log(`Changing to category: ${category}`);
+    
+    // Set the category first
+    setCurrentCategory(category);
+    setSelectedEmail(null);
+    
+    // Switch mailbox based on category
+    if (category === "sent") {
+      console.log("Finding and switching to sent mailbox");
+      // Try all possible sent mailbox options in sequence
+      const trySentMailboxes = async () => {
+        // Common sent mailbox paths to try in order
+        const mailboxPaths = ["[Gmail]/Sent Mail", "SENT", "Sent"];
+        
+        // First check if we're already in a sent mailbox
+        if (isSentMailbox(currentMailbox)) {
+          console.log(`Already in a sent mailbox: ${currentMailbox}`);
+          // Just reload emails
+          loadEmails();
+          return;
+        }
+        
+        // Check if we have sent mailboxes in our mailbox list
+        const sentMailbox = mailboxes.find(mb => 
+          mb.path.toLowerCase().includes("sent")
+        );
+        
+        if (sentMailbox) {
+          console.log(`Found sent mailbox in mailbox list: ${sentMailbox.path}`);
+          handleSwitchMailbox(sentMailbox.path);
+          return;
+        }
+        
+        // Try standard paths
+        for (const path of mailboxPaths) {
+          try {
+            console.log(`Trying sent mailbox path: ${path}`);
+            handleSwitchMailbox(path);
+            return; // If successful, stop trying
+          } catch (err) {
+            console.error(`Failed to switch to sent mailbox ${path}:`, err);
+            continue; // Try next path
+          }
+        }
+        
+        // If we get here, none of the paths worked
+        toast.error("Could not locate sent mailbox");
+      };
+      
+      // Start the process
+      trySentMailboxes().catch(err => {
+        console.error("Error in trySentMailboxes:", err);
+        toast.error("Failed to switch to sent mailbox");
+      });
+    } else {
+      // For primary category, switch to INBOX
+      handleSwitchMailbox("INBOX").catch(err => {
+        console.error("Failed to switch to inbox:", err);
+        toast.error("Failed to switch to inbox");
+      });
+    }
+  };
+
+  // Refresh emails
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await loadEmails()
+    setRefreshing(false)
+  }
+
+  // Switch mailbox
+  const handleSwitchMailbox = async (mailbox: string) => {
+    console.log(`Switching to mailbox: ${mailbox}`);
+    setCurrentMailbox(mailbox)
+    setSelectedEmail(null)
+    setLoading(true)
+
+    try {
+      const result = await fetchEmails({
+        mailbox,
+        limit: 50,
+      })
+
+      if (result.error) {
+        setError("Failed to load emails. Please try again later.")
+        console.error("Error fetching emails:", result.error);
+        return Promise.reject(result.error);
+      } else {
+        // Update emails list
+        setEmails(result.emails || [])
+        
+        // If this is a sent-type mailbox, update the category
+        if (isSentMailbox(mailbox)) {
+          console.log("Detected sent mailbox, updating category to sent");
+          setCurrentCategory("sent");
+          // Update filtered emails directly to bypass the filtering logic
+          setFilteredEmails(result.emails || []);
+        } else if (mailbox === "INBOX") {
+          console.log("Detected inbox, updating category to primary");
+          setCurrentCategory("primary");
+        }
+        
+        console.log(`Successfully loaded ${result.emails?.length || 0} emails from ${mailbox}`);
+        return Promise.resolve(true);
+      }
+    } catch (err) {
+      console.error("Error loading emails:", err)
+      setError("Failed to load emails. Please try again later.")
+      return Promise.reject(err);
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Handle mark as read
+  const handleMarkAsRead = async (email: Email) => {
+    try {
+      const success = await markEmailAsRead(currentMailbox, email.id)
+      if (success) {
+        // Update local state to reflect changes
+        const updatedEmails = emails.map((e) =>
+          e.id === email.id ? { ...e, flags: [...(e.flags || []).filter((f) => f !== "\\Unseen")] } : e,
+        )
+        setEmails(updatedEmails)
+      }
+    } catch (err) {
+      console.error("Error marking email as read:", err)
+      toast.error("Failed to mark email as read")
+    }
+  }
+
+  // Handle moving email to another mailbox
+  const handleMoveEmail = async (email: Email, targetMailbox: string) => {
+    try {
+      const success = await moveEmail(currentMailbox, targetMailbox, email.id)
+      if (success) {
+        // Remove email from current list
+        const updatedEmails = emails.filter((e) => e.id !== email.id)
+        setEmails(updatedEmails)
+
+        if (selectedEmail?.id === email.id) {
+          setSelectedEmail(null)
+        }
+
+        toast.success(`Email moved to ${targetMailbox}`)
+      }
+    } catch (err) {
+      console.error("Error moving email:", err)
+      toast.error("Failed to move email")
+    }
+  }
+
+  const handleLogout = () => {
+    logout()
+    toast.success("Logged out successfully")
+    router.push("/login")
+  }
+
+  const getUserInitials = () => {
+    if (!user?.name) return "U"
+    return user.name
+      .split(" ")
+      .map((part) => part[0])
+      .join("")
+  }
+
+  // Get the display name for email list (sender for received, recipient for sent)
+  const getEmailDisplayName = (email: Email) => {
+    // For sent emails, we want to show the recipient
+    if (currentCategory === "sent") {
+      return getSenderName(email.to || "Unknown Recipient");
+    }
+    // For received emails, show the sender
+    return getSenderName(email.from || "Unknown Sender");
+  }
+  
+  // Get display address for email (to or from)
+  const getEmailDisplayAddress = (email: Email) => {
+    if (currentCategory === "sent") {
+      return email.to || "Unknown Recipient";
+    }
+    return email.from || "Unknown Sender";
+  }
+  
+  // Get initials for the avatar
+  const getEmailInitials = (email: Email) => {
+    const displayName = getEmailDisplayName(email);
+    return displayName
+      .split(" ")
+      .map((part) => part[0])
+      .slice(0, 2)
+      .join("");
+  }
+
+  // Format preview of email (text or html)
+  const getEmailPreview = (email: Email) => {
+    if (email.text) {
+      return email.text.slice(0, 100) + (email.text.length > 100 ? "..." : "")
+    } else if (email.html) {
+      // Strip HTML tags for preview
+      const textPreview = email.html
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+      return textPreview.slice(0, 100) + (textPreview.length > 100 ? "..." : "")
+    }
+    return "No content"
+  }
+
+  // Format sender name from email address
+  const getSenderName = (from: string) => {
+    if (!from) return "Unknown"
+
+    // Extract name if available, otherwise use email address
+    const nameMatch = from.match(/(.*?)\s*</)
+    if (nameMatch && nameMatch[1]) {
+      return nameMatch[1].trim()
+    }
+
+    // Extract just the email address
+    const emailMatch = from.match(/<(.*?)>/)
+    if (emailMatch && emailMatch[1]) {
+      return emailMatch[1]
+    }
+
+    return from
+  }
+
+  // Format relative time (e.g., "2 hours ago")
+  const getRelativeTime = (dateString: string) => {
+    if (!dateString) return ""
+
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffSec = Math.floor(diffMs / 1000)
+    const diffMin = Math.floor(diffSec / 60)
+    const diffHour = Math.floor(diffMin / 60)
+    const diffDay = Math.floor(diffHour / 24)
+
+    if (diffSec < 60) return "Just now"
+    if (diffMin < 60) return `${diffMin}m ago`
+    if (diffHour < 24) return `${diffHour}h ago`
+    if (diffDay < 7) return `${diffDay}d ago`
+
+    return date.toLocaleDateString()
+  }
+
+  // Function to open the email in a modal
+  const openEmailModal = (email: Email) => {
+    setSelectedEmail(email)
+    setIsEmailModalOpen(true)
+
+    // Mark as read if currently unread
+    if (email.flags && email.flags.includes("\\Unseen")) {
+      handleMarkAsRead(email)
+    }
+  }
+
+  // Update useEffect to reload emails when currentMailbox changes
+  useEffect(() => {
+    loadEmails()
+  }, [currentMailbox])
+
+  // Function to handle reply button click
+  const handleReply = () => {
+    if (!selectedEmail) return
+
+    // Initialize with empty text instead of quoting the original message
+    setReplyText("");
+    setIsReplying(true);
+  }
+
+  // Function to generate response with Llama
+  const generateResponse = async () => {
+    if (!selectedEmail) return
+
+    setIsGenerating(true)
+
+    try {
+      const session = getSession()
+      if (!session) {
+        toast.error("Authentication required")
+        setIsGenerating(false)
+        return
+      }
+
+      // Get content from the email
+      const emailContent = selectedEmail.text || (selectedEmail.html ? selectedEmail.html.replace(/<[^>]*>/g, "") : "")
+
+      // Get sender name based on email type
+      const recipient = currentCategory === "sent"
+        ? getSenderName(selectedEmail.to || "Unknown Recipient")
+        : getSenderName(selectedEmail.from || "Unknown Sender");
+
+      // Create a more detailed prompt for better responses
+      const promptForAI = `Write me a professional email reply to the following message ${currentCategory === "sent" ? "that I previously sent to" : "from"} ${recipient}.
+      
+Subject: ${selectedEmail.subject || "(No subject)"}
+
+Email Content:
+${emailContent}
+
+Requirements:
+1. Keep the response concise but complete
+2. Address all questions or concerns in the original email
+3. Use a friendly, professional tone
+4. End with an appropriate closing and my name
+5. Don't include any unwanted disclaimers or error messages
+6. Format it as a clean email reply that's ready to send
+
+Just return the email text itself without any additional explanations or commentary.`;
+
+      console.log("Sending request to Llama AI for email generation");
+      
+      // Use the twin/chat endpoint which is successfully working with Llama AI
+      const response = await fetch(`${API_URL}/api/twin/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          message: promptForAI,
+          userId: user?.id || "user",
+          forceOllama: true,
+          preventFallback: true,
+          debug: false
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Llama AI response error:", errorText);
+        throw new Error(`Failed to generate response with Llama AI: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log("Llama AI response received:", data);
+
+      // Use the generated response
+      if (data.response) {
+        toast.success("Response generated successfully");
+        setReplyText(data.response.trim());
+      } else {
+        throw new Error("No valid response generated from Llama AI");
+      }
+    } catch (error) {
+      console.error("Error generating response:", error);
+      toast.error("Failed to generate response. Using template instead.");
+
+      // Enhanced fallback response - professional email template
+      const sender = getSenderName(selectedEmail.from);
+      const subject = selectedEmail.subject || "(No subject)";
+      const fallbackResponse = `Dear ${sender},
+
+Thank you for your email regarding "${subject}".
+
+I appreciate you reaching out. I've reviewed your message and will address your points shortly. If you need any immediate assistance, please let me know.
+
+Best regards,
+${user?.name || "Me"}`;
+
+      setReplyText(fallbackResponse);
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  // Function to handle sending a reply
+  const sendReply = async () => {
+    if (!selectedEmail || !replyText.trim()) return;
+    
+    setSendingReply(true);
+    
+    try {
+      // Get the recipient (from the original email's sender or recipient)
+      const recipient = currentCategory === "sent"
+        ? selectedEmail.to  // For sent emails, reply to the recipient
+        : selectedEmail.from; // For received emails, reply to the sender
+      
+      // Create subject with Re: prefix if not already present
+      const subject = selectedEmail.subject?.startsWith('Re:') 
+        ? selectedEmail.subject 
+        : `Re: ${selectedEmail.subject || '(No subject)'}`;
+      
+      console.log("Sending email reply to:", recipient);
+      
+      // Send the email using the API
+      const result = await sendEmail({
+        to: recipient,
+        subject: subject,
+        text: replyText,
+        inReplyTo: selectedEmail.messageId,
+        references: selectedEmail.messageId
+      });
+      
+      if (result.success) {
+        toast.success("Reply sent successfully");
+        setIsReplying(false);
+        setReplyText('');
+        setIsEmailModalOpen(false); // Close the modal after successfully sending
+        
+        // Refresh the sent folder to show the new email
+        if (currentCategory === "sent") {
+          loadEmails();
+        }
+      } else {
+        toast.error(result.error || "Failed to send reply");
+      }
+    } catch (error) {
+      console.error("Error sending reply:", error);
+      toast.error("Failed to send reply. Please try again.");
+    } finally {
+      setSendingReply(false);
+    }
+  };
+
+  // Function to quote original message
+  const quoteOriginalMessage = () => {
+    if (!selectedEmail) return;
+    
+    // Get original text content
+    const originalText = selectedEmail.text || (selectedEmail.html ? selectedEmail.html.replace(/<[^>]*>/g, "") : "");
+    
+    // Create quoted format
+    const quotedText = originalText
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    
+    // Append to current reply text
+    setReplyText(prevText => 
+      prevText + `\n\n-------- Original Message --------\n${quotedText}`
+    );
+  };
+
+  // Add useEffect to manage body scroll when modal is open
+  useEffect(() => {
+    if (isEmailModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'auto';
+    }
+    return () => {
+      document.body.style.overflow = 'auto';
+    };
+  }, [isEmailModalOpen]);
+
+  return (
+    <>
+      <div className={`flex h-screen bg-[var(--supabase-dark-bg)] ${isEmailModalOpen ? 'overflow-hidden' : ''}`}>
+        {/* Sidebar */}
+        <Sidebar activePage="emails" />
+
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-[var(--supabase-darker-bg)]">
+          {/* Header */}
+          <header className="bg-[var(--supabase-darker-bg)] border-b border-[var(--supabase-border)] h-16 flex items-center px-6">
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="md:hidden mr-2 text-gray-300 hover:text-white hover:bg-[var(--supabase-inactive)] p-2 rounded-md"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div className="flex-1 flex items-center">
+              <div className="relative w-full max-w-md">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+                <Input
+                  placeholder="Search emails..."
+                  className="pl-8 bg-[var(--supabase-dark-bg)] border-[var(--supabase-border)] text-white placeholder:text-gray-400 focus:border-slate-500 focus:ring-slate-500"
+                />
+              </div>
+            </div>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing || loading}
+                className="relative text-gray-200 hover:text-white hover:bg-slate-700 p-2 rounded-md disabled:opacity-50"
+              >
+                {refreshing ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
+              </button>
+              <button className="relative text-gray-200 hover:text-white hover:bg-slate-700 p-2 rounded-md">
+                <Bell className="h-5 w-5" />
+                <span className="absolute top-1 right-1 h-2 w-2 bg-emerald-500 rounded-full"></span>
+              </button>
+              <Link
+                href="/dashboard/twinbot"
+                className="text-gray-200 hover:text-white hover:bg-slate-700 p-2 rounded-md block"
+              >
+                <MessageSquare className="h-5 w-5" />
+              </Link>
+              <div className="relative" ref={profileRef}>
+                <button
+                  onClick={() => setIsProfileOpen(!isProfileOpen)}
+                  className="flex items-center hover:bg-slate-700 p-1 rounded-md transition-colors"
+                >
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
+                    <AvatarFallback className="bg-emerald-600 text-white">{getUserInitials()}</AvatarFallback>
+                  </Avatar>
+                  <ChevronDown
+                    className={`h-4 w-4 ml-1 text-gray-300 transition-transform ${isProfileOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+
+                {isProfileOpen && (
+                  <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-slate-800 ring-1 ring-black ring-opacity-5 z-50">
+                    <div className="px-4 py-2 border-b border-slate-700">
+                      <p className="text-sm font-medium text-white">{user?.name || "User"}</p>
+                      <p className="text-xs text-gray-300">{user?.email || ""}</p>
+                    </div>
+                    <Link
+                      href="/dashboard/profile"
+                      className="block px-4 py-2 text-sm text-gray-200 hover:bg-slate-700 hover:text-white flex items-center"
+                    >
+                      <User className="h-4 w-4 mr-2" />
+                      Profile
+                    </Link>
+                    <Link
+                      href="/dashboard/settings"
+                      className="block px-4 py-2 text-sm text-gray-200 hover:bg-slate-700 hover:text-white flex items-center"
+                    >
+                      <Settings className="h-4 w-4 mr-2" />
+                      Settings
+                    </Link>
+                    <button
+                      onClick={handleLogout}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-slate-700 hover:text-white flex items-center"
+                    >
+                      <LogOut className="h-4 w-4 mr-2" />
+                      Logout
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </header>
+
+          {/* Content */}
+          <div className="flex-1 flex overflow-hidden">
+            {/* Email Folders Sidebar */}
+            <div className="w-64 border-r border-[var(--supabase-border)] bg-[var(--supabase-dark-bg)] flex flex-col">
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-white">Emails</h2>
+                    <p className="text-sm text-white">Manage your inbox</p>
+                  </div>
+
+                  <Link
+                    href="#"
+                    className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Compose</span>
+                  </Link>
+                </div>
+              </div>
+              <ScrollArea className="flex-1">
+                <div className="p-2 space-y-1">
+                  {/* Navigation */}
+                  <div className="p-4">
+                    <h3 className="text-xs font-semibold text-white uppercase tracking-wider px-2 mb-2">Navigation</h3>
+                    <div className="space-y-1">
+                      {/* Default mailboxes */}
+                      {["INBOX", "[Gmail]/Sent Mail", "[Gmail]/Drafts", "[Gmail]/All Mail", "[Gmail]/Trash"].map(
+                        (mailbox) => (
+                          <button
+                            key={mailbox}
+                            onClick={() => handleSwitchMailbox(mailbox)}
+                            className={`flex items-center w-full p-2 rounded-md ${
+                              currentMailbox === mailbox
+                                ? "bg-slate-700 text-white"
+                                : "text-white hover:bg-slate-700 hover:text-white"
+                            }`}
+                          >
+                            {mailboxIcons[mailbox]}
+                            <span>{mailboxDisplayNames[mailbox]}</span>
+                            {mailbox === "INBOX" && (
+                              <Badge className="ml-auto bg-slate-600 text-white">
+                                {emails.filter((e) => e.flags && e.flags.includes("\\Unseen")).length}
+                              </Badge>
+                            )}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Dynamic mailboxes */}
+                {mailboxes.length > 0 && (
+                  <div className="p-4 border-t border-[var(--supabase-border)] mt-2">
+                    <h3 className="text-xs font-semibold text-white uppercase tracking-wider px-2 mb-2">Folders</h3>
+                    <div className="space-y-1">
+                      {mailboxes
+                        .filter(
+                          (mailbox) =>
+                            !["INBOX", "Sent", "Drafts", "Archive", "Trash"].includes(mailbox.path) &&
+                            !mailbox.path.startsWith("[Gmail]"),
+                        )
+                        .map((mailbox) => (
+                          <button
+                            key={mailbox.path}
+                            onClick={() => handleSwitchMailbox(mailbox.path)}
+                            className={`flex items-center w-full p-2 rounded-md ${
+                              currentMailbox === mailbox.path
+                                ? "bg-slate-700 text-white"
+                                : "text-white hover:bg-slate-700 hover:text-white"
+                            }`}
+                          >
+                            <Tag className="h-4 w-4 mr-3" />
+                            <span>{mailbox.name}</span>
+                            {mailbox.unseen && mailbox.unseen > 0 && (
+                              <Badge className="ml-auto bg-slate-600 text-white">{mailbox.unseen}</Badge>
+                            )}
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
+
+            {/* Email List and Content */}
+            <div className="flex-1 flex flex-col bg-[var(--supabase-light-bg)]">
+              {/* Email Categories */}
+              <div className="bg-[var(--supabase-darker-bg)] border-b border-[var(--supabase-border)]">
+                <Tabs
+                  value={currentCategory}
+                  onValueChange={(value) => handleCategoryChange(value as EmailCategory)}
+                  className="w-full"
+                >
+                  <TabsList className="w-full flex bg-zinc-800 p-0.5 gap-1 border-b border-zinc-700">
+                    <TabsTrigger
+                      value="primary"
+                      className="flex-1 px-4 py-2.5 data-[state=active]:bg-zinc-700 data-[state=active]:text-white data-[state=inactive]:text-zinc-300 data-[state=inactive]:hover:text-white data-[state=inactive]:hover:bg-zinc-700/50 rounded-md transition-all"
+                    >
+                      <Inbox className="h-4 w-4 mr-2" />
+                      Primary
+                      {currentCategory === "primary" && currentMailbox === "INBOX" && 
+                        filteredEmails.some(email => email.flags?.includes("\\Unseen")) && (
+                        <span className="ml-2 bg-blue-500 text-white text-xs rounded-full px-1.5 py-0.5 min-w-5 text-center">
+                          {filteredEmails.filter(email => email.flags?.includes("\\Unseen")).length}
+                        </span>
+                      )}
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="sent"
+                      className="flex-1 px-4 py-2.5 data-[state=active]:bg-zinc-700 data-[state=active]:text-white data-[state=inactive]:text-zinc-300 data-[state=inactive]:hover:text-white data-[state=inactive]:hover:bg-zinc-700/50 rounded-md transition-all"
+                    >
+                      <Send className="h-4 w-4 mr-2" />
+                      Sent
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
