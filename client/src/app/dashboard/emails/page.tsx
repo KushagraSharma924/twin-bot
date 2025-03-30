@@ -564,22 +564,21 @@ export default function EmailsPage() {
 
   // Function to generate response with Llama
   const generateResponse = async () => {
-    if (!selectedEmail) return
+    if (!selectedEmail) return;
 
-    setIsGenerating(true)
+    setIsGenerating(true);
 
     try {
-      const session = getSession()
+      const session = getSession();
       if (!session) {
-        toast.error("Authentication required")
-        setIsGenerating(false)
-        return
+        toast.error("Authentication required");
+        setIsGenerating(false);
+        return;
       }
 
       // Get content from the email
-      const emailContent = selectedEmail.text || (selectedEmail.html ? selectedEmail.html.replace(/<[^>]*>/g, "") : "")
-
-      const sender = getSenderName(selectedEmail.from)
+      const emailContent = selectedEmail.text || (selectedEmail.html ? selectedEmail.html.replace(/<[^>]*>/g, "") : "");
+      const sender = getSenderName(selectedEmail.from);
 
       // Create a more detailed prompt for better responses
       const promptForAI = `Write me a professional email reply to the following message from ${sender}.
@@ -599,48 +598,68 @@ Requirements:
 
 Just return the email text itself without any additional explanations or commentary.`;
 
-      console.log("Sending request to Llama AI for email generation");
+      console.log("Generating email response...");
       
-      // Use the twin/chat endpoint which is successfully working with Llama AI
-      const response = await fetch(`${API_URL}/api/twin/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          message: promptForAI,
-          userId: user?.id || "user",
-          forceOllama: true,
-          preventFallback: true,
-          debug: false
-        }),
-      });
+      // Prioritize using the twin/chat endpoint which is working with Llama AI
+      try {
+        console.log("Using Llama AI via twin/chat endpoint");
+        const llamaResponse = await fetch(`${API_URL}/api/twin/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            message: promptForAI,
+            userId: user?.id || "user",
+            forceOllama: true,
+            preventFallback: false, // Allow fallbacks if needed
+            debug: true
+          }),
+        });
+        
+        if (llamaResponse.ok) {
+          const data = await llamaResponse.json();
+          console.log("AI response received successfully:", data);
+          
+          if (data.response) {
+            toast.success("Response generated successfully");
+            setReplyText(data.response.trim());
+            setIsGenerating(false);
+            return;
+          }
+        } else {
+          console.error(`Twin chat endpoint failed: ${llamaResponse.status} ${llamaResponse.statusText}`);
+          const errorText = await llamaResponse.text();
+          console.error("Error details:", errorText);
+        }
+      } catch (llamaError) {
+        console.error("Llama AI error:", llamaError);
+      }
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Llama AI response error:", errorText);
-        throw new Error(`Failed to generate response with Llama AI: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      console.log("Llama AI response received:", data);
-
-      // Use the generated response
-      if (data.response) {
-        toast.success("Response generated successfully");
-        setReplyText(data.response.trim());
-      } else {
-        throw new Error("No valid response generated from Llama AI");
-      }
+      // If we reached this point, provide a fallback response
+      console.log("All AI attempts failed, using fallback template");
+      const fallbackResponse = generateFallbackResponse(sender, selectedEmail.subject);
+      setReplyText(fallbackResponse);
+      toast.warning("Using template response as AI services are currently unavailable");
+      
     } catch (error) {
       console.error("Error generating response:", error);
       toast.error("Failed to generate response. Using template instead.");
 
-      // Enhanced fallback response - professional email template
+      // Generate fallback response
       const sender = getSenderName(selectedEmail.from);
       const subject = selectedEmail.subject || "(No subject)";
-      const fallbackResponse = `Dear ${sender},
+      const fallbackResponse = generateFallbackResponse(sender, subject);
+      setReplyText(fallbackResponse);
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  // Helper function to generate a fallback response
+  const generateFallbackResponse = (sender: string, subject: string): string => {
+    return `Dear ${sender},
 
 Thank you for your email regarding "${subject}".
 
@@ -648,11 +667,6 @@ I appreciate you reaching out. I've reviewed your message and will address your 
 
 Best regards,
 ${user?.name || "Me"}`;
-
-      setReplyText(fallbackResponse);
-    } finally {
-      setIsGenerating(false);
-    }
   }
 
   // Function to handle sending a reply
@@ -929,9 +943,11 @@ ${user?.name || "Me"}`;
                             {mailboxIcons[mailbox]}
                             <span>{mailboxDisplayNames[mailbox]}</span>
                             {mailbox === "INBOX" && (
-                              <Badge className="ml-auto bg-slate-600 text-white">
-                                {emails.filter((e) => e.flags && e.flags.includes("\\Unseen")).length}
-                              </Badge>
+                              emails.filter((e) => e.flags && e.flags.includes("\\Unseen")).length > 0 && (
+                                <Badge className="ml-auto bg-slate-600 text-white">
+                                  {emails.filter((e) => e.flags && e.flags.includes("\\Unseen")).length}
+                                </Badge>
+                              )
                             )}
                           </button>
                         ),
@@ -991,7 +1007,7 @@ ${user?.name || "Me"}`;
                       <Inbox className="h-4 w-4 mr-2" />
                       Primary
                       {currentCategory === "primary" && currentMailbox === "INBOX" && 
-                        filteredEmails.some(email => email.flags?.includes("\\Unseen")) && (
+                        filteredEmails.filter(email => email.flags?.includes("\\Unseen")).length > 0 && (
                         <span className="ml-2 bg-blue-500 text-white text-xs rounded-full px-1.5 py-0.5 min-w-5 text-center">
                           {filteredEmails.filter(email => email.flags?.includes("\\Unseen")).length}
                         </span>
@@ -1129,8 +1145,8 @@ ${user?.name || "Me"}`;
                   <DialogTitle className="text-xl font-semibold text-white">
                     {selectedEmail?.subject || '(No subject)'}
                   </DialogTitle>
-                  <DialogDescription className="sr-only">
-                    Email message details and options
+                  <DialogDescription className="text-zinc-400 text-sm mt-1">
+                    View email details and options for managing this message
                   </DialogDescription>
                   <div className="flex space-x-2">
                     <Button 
@@ -1410,8 +1426,8 @@ ${user?.name || "Me"}`;
               <DialogTitle className="text-lg font-semibold text-white">
                 New Email
               </DialogTitle>
-              <DialogDescription className="sr-only">
-                Compose a new email message
+              <DialogDescription className="text-zinc-400 text-sm mt-1">
+                Compose a new email message to send
               </DialogDescription>
             </DialogHeader>
 

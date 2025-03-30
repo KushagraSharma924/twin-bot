@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { User, LogOut, Settings, ChevronDown } from 'lucide-react';
+import { getSession } from '@/lib/api';
 
 interface UserProfileMenuProps {
   username?: string;
@@ -11,6 +12,7 @@ interface UserData {
   username: string;
   email: string;
   avatarUrl?: string;
+  name?: string;
 }
 
 export default function UserProfileMenu({
@@ -27,25 +29,64 @@ export default function UserProfileMenu({
     const fetchUserProfile = async () => {
       try {
         setIsLoading(true);
-        // Replace with your actual API endpoint
-        const response = await fetch('/api/user/profile');
+        // Use the correct API endpoint
+        const session = getSession();
+        if (!session || !session.access_token) {
+          throw new Error('No active session found');
+        }
+
+        const response = await fetch('/api/auth/profile', {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        });
         
         if (!response.ok) {
           throw new Error('Failed to fetch user profile');
         }
         
         const data = await response.json();
-        setUserData(data);
+        console.log('Fetched user profile:', data);
+        setUserData({
+          id: data.id,
+          username: data.username || data.name || initialUsername,
+          name: data.name,
+          email: data.email || 'No email found',
+          avatarUrl: data.avatar_url || initialAvatarUrl
+        });
       } catch (err) {
         console.error('Error fetching user profile:', err);
         setError(err instanceof Error ? err.message : 'Unknown error occurred');
-        // Use initial values as fallback
-        setUserData({
-          id: '1',
-          username: initialUsername,
-          email: 'user@example.com',
-          avatarUrl: initialAvatarUrl
-        });
+        
+        // Try to get minimal user info from local storage as fallback
+        try {
+          const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
+          if (userInfo && userInfo.email) {
+            setUserData({
+              id: userInfo.id || '1',
+              username: userInfo.name || initialUsername,
+              name: userInfo.name,
+              email: userInfo.email,
+              avatarUrl: initialAvatarUrl
+            });
+          } else {
+            // Final fallback
+            setUserData({
+              id: '1',
+              username: initialUsername,
+              email: 'user@example.com',
+              avatarUrl: initialAvatarUrl
+            });
+          }
+        } catch (storageErr) {
+          // Use initial values as final fallback
+          setUserData({
+            id: '1',
+            username: initialUsername,
+            email: 'user@example.com',
+            avatarUrl: initialAvatarUrl
+          });
+        }
       } finally {
         setIsLoading(false);
       }
@@ -61,18 +102,22 @@ export default function UserProfileMenu({
   const handleSignOut = async () => {
     try {
       // Call backend logout endpoint
-      const response = await fetch('/api/auth/logout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error('Logout failed');
+      const session = getSession();
+      if (session && session.access_token) {
+        const response = await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        });
       }
       
-      // Redirect to login page or refresh
+      // Clear local storage
+      localStorage.removeItem('session');
+      localStorage.removeItem('user_info');
+      
+      // Redirect to login page
       window.location.href = '/login';
     } catch (err) {
       console.error('Error during sign out:', err);
@@ -86,7 +131,8 @@ export default function UserProfileMenu({
   };
 
   // Display loading state or fallback to initial values
-  const displayName = isLoading ? initialUsername : (userData?.username || initialUsername);
+  // Prioritize the name field if available, then username, then initialUsername
+  const displayName = isLoading ? initialUsername : (userData?.name || userData?.username || initialUsername);
   const displayEmail = isLoading ? 'Loading...' : (userData?.email || 'user@example.com');
   const displayAvatar = userData?.avatarUrl || initialAvatarUrl;
 

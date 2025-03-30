@@ -121,10 +121,56 @@ export function getSession(): { access_token: string; refresh_token: string } | 
   }
 }
 
-export function storeGoogleToken(token: string): void {
-  if (typeof window !== 'undefined') {
-    // Simple string storage for backward compatibility
-    localStorage.setItem('google_token', token);
+/**
+ * Store the Google token with enhanced error handling and fallbacks
+ */
+export function storeGoogleToken(token: string, tokenType: string = 'Bearer', expiresIn?: string): void {
+  if (typeof window === 'undefined') {
+    console.warn('Cannot store Google token: window is undefined');
+    return;
+  }
+  
+  try {
+    // Clear any old tokens first for clean state
+    localStorage.removeItem('google_token');
+    
+    // Create enhanced token object with expiration
+    const tokenInfo = {
+      token,
+      type: tokenType,
+      expires_at: expiresIn ? Date.now() + (parseInt(expiresIn) * 1000) : null,
+      stored_at: Date.now()
+    };
+    
+    // Primary storage
+    localStorage.setItem('google_token', JSON.stringify(tokenInfo));
+    
+    // Fallback storage
+    try {
+      sessionStorage.setItem('google_token_backup', token);
+    } catch (sessionError) {
+      console.warn('Failed to store token in sessionStorage, continuing with localStorage only');
+    }
+    
+    // Clear any auth needed flags
+    localStorage.removeItem('google_auth_needed');
+    
+    // Verification
+    const storedToken = localStorage.getItem('google_token');
+    if (!storedToken) {
+      console.error('Failed to verify token storage. This might indicate browser storage issues.');
+      // Try again with just the token string
+      localStorage.setItem('google_token', token);
+    }
+  } catch (error) {
+    console.error('Error storing Google token:', error);
+    
+    // Last resort fallback - try storing just the raw token
+    try {
+      localStorage.setItem('google_token', token);
+    } catch (fallbackError) {
+      console.error('Critical error: Failed all attempts to store token');
+    }
   }
 }
 

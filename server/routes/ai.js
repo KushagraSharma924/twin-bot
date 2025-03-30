@@ -6,6 +6,10 @@ import * as embeddingService from '../services/embeddingService.js';
 import conversationService from '../services/conversationService.js';
 import ollamaTensorflowService from '../services/ollamaTensorflowService.js';
 import ollamaFallback from '../fallbacks/ollama-fallback.js';
+import { config } from '../config/index.js';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const router = express.Router();
 
@@ -21,11 +25,27 @@ router.post('/gemini', async (req, res) => {
       return res.status(400).json({ error: 'Prompt is required' });
     }
     
-    const response = await aiService.generateTextWithGemini(prompt, model, maxTokens);
+    // Check if Gemini is configured
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'Gemini API key not configured' });
+    }
     
-    res.json({ response });
+    console.log('Processing Gemini request for email generation');
+    
+    try {
+      const response = await aiService.generateTextWithGemini(
+        prompt,
+        model || 'gemini-pro',
+        maxTokens || 500
+      );
+      
+      res.json({ text: response, service: 'gemini' });
+    } catch (geminiError) {
+      console.error('Gemini generation error:', geminiError);
+      res.status(500).json({ error: 'Gemini generation failed', details: geminiError.message });
+    }
   } catch (error) {
-    console.error('AI generation error:', error);
+    console.error('Gemini endpoint error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -42,11 +62,27 @@ router.post('/openai', async (req, res) => {
       return res.status(400).json({ error: 'Prompt is required' });
     }
     
-    const response = await aiService.generateTextWithOpenAI(prompt, model, maxTokens);
+    // Check if OpenAI is configured
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
     
-    res.json({ response });
+    console.log('Processing OpenAI request for email generation');
+    
+    try {
+      const response = await aiService.generateTextWithOpenAI(
+        prompt,
+        model || 'gpt-3.5-turbo',
+        maxTokens || 500
+      );
+      
+      res.json({ text: response, service: 'openai' });
+    } catch (openaiError) {
+      console.error('OpenAI generation error:', openaiError);
+      res.status(500).json({ error: 'OpenAI generation failed', details: openaiError.message });
+    }
   } catch (error) {
-    console.error('OpenAI generation error:', error);
+    console.error('OpenAI endpoint error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -755,79 +791,104 @@ router.get('/twin/tensorflow/status', async (req, res) => {
 });
 
 /**
- * Unified AI text generation (serves as a catch-all for client requests)
+ * Unified AI text generation endpoint
  * POST /api/ai/generate
  */
 router.post('/generate', async (req, res) => {
   try {
-    const { prompt, model, max_tokens } = req.body;
+    const { prompt, type, model, maxTokens } = req.body;
     
     if (!prompt) {
       return res.status(400).json({ error: 'Prompt is required' });
     }
     
-    console.log(`AI generate request received with model "${model || 'default'}" and ${max_tokens || 'default'} max tokens`);
+    console.log(`Processing unified generation request for type: ${type || 'general'}`);
     
-    let response;
-    let serviceUsed = 'none';
+    // First try to use Ollama via processNLPTask which handles multiple fallbacks internally
+    try {
+      console.log('Attempting to generate using Ollama');
+      const ollamaResponse = await aiService.processNLPTask(
+        {
+          content: prompt,
+          task: type || 'general',
+          forceOllama: true,
+          options: {
+            temperature: 0.7,
+            num_predict: 512
+          }
+        }
+      );
+      
+      console.log('Ollama generation successful');
+      return res.json({ 
+        text: ollamaResponse,
+        service: 'ollama' 
+      });
+    } catch (ollamaError) {
+      console.error('Ollama generation failed:', ollamaError);
+      // Continue to next service
+    }
     
-    // Try OpenAI first if configured
+    // Try OpenAI if configured
     if (process.env.OPENAI_API_KEY) {
       try {
-        console.log('Attempting to use OpenAI for generation');
-        response = await aiService.generateTextWithOpenAI(prompt, model || 'gpt-3.5-turbo', max_tokens || 500);
-        serviceUsed = 'openai';
-        console.log('Successfully generated text with OpenAI');
-      } catch (openaiError) {
-        console.error('OpenAI generation failed:', openaiError.message);
-        // Continue to next option
-      }
-    }
-    
-    // If OpenAI failed or isn't configured, try Gemini
-    if (!response && process.env.GEMINI_API_KEY) {
-      try {
-        console.log('Attempting to use Gemini for generation');
-        response = await aiService.generateTextWithGemini(prompt, model || 'gemini-pro', max_tokens || 500);
-        serviceUsed = 'gemini';
-        console.log('Successfully generated text with Gemini');
-      } catch (geminiError) {
-        console.error('Gemini generation failed:', geminiError.message);
-        // Continue to next option
-      }
-    }
-    
-    // If both failed, use Ollama or fallback to static response
-    if (!response) {
-      try {
-        console.log('Attempting to use Ollama for generation');
-        response = await aiService.processNLPTask(prompt, 'email');
-        serviceUsed = 'ollama';
-        console.log('Successfully generated text with Ollama');
-      } catch (ollamaError) {
-        console.error('All AI services failed for text generation');
-        // Return a useful error message
-        return res.status(500).json({ 
-          error: 'All configured AI services failed to generate a response',
-          serviceAttempted: [
-            process.env.OPENAI_API_KEY ? 'OpenAI' : null,
-            process.env.GEMINI_API_KEY ? 'Gemini' : null,
-            'Ollama'
-          ].filter(Boolean).join(', ')
+        console.log('Attempting to generate using OpenAI');
+        const openaiResponse = await aiService.generateTextWithOpenAI(
+          prompt,
+          model || 'gpt-3.5-turbo',
+          maxTokens || 500
+        );
+        
+        console.log('OpenAI generation successful');
+        return res.json({ 
+          text: openaiResponse,
+          service: 'openai' 
         });
+      } catch (openaiError) {
+        console.error('OpenAI generation failed:', openaiError);
+        // Continue to next service
       }
     }
     
-    // Return the generated text with metadata
-    res.json({ 
-      text: response,
-      service: serviceUsed,
-      model: model || 'default',
-      generated: true
+    // Try Gemini if configured
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        console.log('Attempting to generate using Gemini');
+        const geminiResponse = await aiService.generateTextWithGemini(
+          prompt,
+          model || 'gemini-pro',
+          maxTokens || 500
+        );
+        
+        console.log('Gemini generation successful');
+        return res.json({ 
+          text: geminiResponse,
+          service: 'gemini' 
+        });
+      } catch (geminiError) {
+        console.error('Gemini generation failed:', geminiError);
+        // All services have failed
+      }
+    }
+    
+    // If we reached here, all services failed
+    // Return a generic response
+    const fallbackResponse = aiService.getTaskSpecificFallbackMessage(type || 'general');
+    console.log('All AI services failed, using fallback response');
+    
+    return res.json({
+      text: fallbackResponse,
+      service: 'fallback',
+      fallback: true
     });
+    
   } catch (error) {
-    console.error('AI generate endpoint error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Unified generation endpoint error:', error);
+    res.status(500).json({ 
+      error: 'All AI services failed', 
+      details: error.message,
+      fallback: true
+    });
   }
 });
 

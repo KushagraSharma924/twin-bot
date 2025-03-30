@@ -37,7 +37,7 @@ import {
 } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { format, addDays, subDays, isToday, isSameDay } from "date-fns"
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1269,11 +1269,16 @@ export default function CalendarPage() {
 
       {/* Add/Edit Event Dialog */}
       <Dialog open={isEventDialogOpen} onOpenChange={setIsEventDialogOpen}>
-        <DialogContent className="bg-gradient-to-b from-[var(--supabase-light-bg)] to-[var(--supabase-light-bg)]/95 border-[var(--supabase-border)] text-white max-w-md rounded-xl shadow-2xl backdrop-blur-sm animate-in fade-in-50 duration-300 ease-out scale-in-95">
+        <DialogContent className="bg-gradient-to-b from-[var(--supabase-light-bg)] to-[var(--supabase-light-bg)]/95 border-[var(--supabase-border)] text-white max-w-md rounded-xl shadow-2xl backdrop-blur-sm animate-in fade-in-80 slide-in-from-bottom-10">
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300">
               {selectedEvent ? (isEditMode ? 'Edit Event' : 'Event Details') : 'Add New Event'}
             </DialogTitle>
+            <DialogDescription className="text-gray-400">
+              {selectedEvent 
+                ? (isEditMode ? 'Update your event details below.' : 'View your event details below.')
+                : 'Create a new event on your calendar. Fill in the details below.'}
+            </DialogDescription>
           </DialogHeader>
           
           {selectedEvent && !isEditMode ? (
